@@ -168,7 +168,7 @@ class BoGrad(Optimizer):
 
     _VALID_STAGES = ("gradient", "update")
     _VALID_MODES = ("full", "negative", "positive")
-    _VALID_METHODS = ("sequential", "qr")
+    _VALID_METHODS = ("sequential", "qr", "householder")
     _VALID_SCOPES = ("per_tensor", "global")
 
     def __init__(
@@ -401,6 +401,8 @@ class BoGrad(Optimizer):
             projected = self._project_sequential(x_flat, buffer_for_proj)
         elif self.orth_method == "qr":
             projected = self._project_qr(x_flat, buffer_for_proj)
+        elif self.orth_method == "householder":
+            projected = self._project_householder(x_flat, buffer_for_proj)
         else:
             raise RuntimeError(f"Unknown orth_method {self.orth_method}")
 
@@ -524,6 +526,56 @@ class BoGrad(Optimizer):
             return x_flat
         coeffs = Q.T @ x_flat
         return x_flat - Q @ coeffs
+
+    def _project_householder(self, x_flat: Tensor, buffer: List[Tensor]) -> Tensor:
+        """True orthogonal projection onto span(buffer)^⊥ via Householder QR.
+
+        Provided for the Experiment 10.04 orthogonalisation-method comparison.
+        Builds an orthonormal basis Q of span(buffer) using Householder
+        reflections (numerically the most stable QR), then removes the component
+        of x in that span: x - Q Q^T x. Mathematically the same projector as the
+        Gram-based QR path, but obtained by reflections — the named alternative
+        the thesis compares on accuracy / time / orthogonality residual.
+
+        Like QR, it does not support per-component sign gating, so under
+        negative/positive modes it defers to the sequential recipe.
+        """
+        if self.projection_mode in ("negative", "positive"):
+            return self._project_sequential(x_flat, buffer)
+        B = torch.stack(
+            [b.to(device=x_flat.device, dtype=self.projection_dtype) for b in buffer],
+            dim=0,
+        )  # [k, p]
+        # Householder QR of B^T (p x k) gives an orthonormal basis of col-space = span(buffer).
+        try:
+            Q, _ = torch.linalg.qr(B.T, mode="reduced", )  # LAPACK geqrf = Householder
+        except RuntimeError:
+            return x_flat
+        coeffs = Q.T @ x_flat
+        return x_flat - Q @ coeffs
+
+    def orthogonality_residual(self, projected: Tensor, buffer: Optional[List[Tensor]] = None) -> float:
+        """Diagnostic for Exp 10.04: ||B_hat^T projected|| where B_hat is the
+        unit-normalised buffer. ~0 means `projected` is orthogonal to span(buffer)
+        (true-orth methods); larger means residual overlap (soft sequential).
+        Uses the per-tensor buffer of the first parameter if none is supplied."""
+        if buffer is None:
+            for group in self.param_groups:
+                for p in group["params"]:
+                    buffer = self.state[p].get("buffer")
+                    break
+                if buffer:
+                    break
+        if not buffer:
+            return 0.0
+        residual = 0.0
+        pv = projected.to(dtype=self.projection_dtype)
+        for b in buffer:
+            bv = b.to(device=projected.device, dtype=self.projection_dtype)
+            bn = bv.norm()
+            if bn.item() > self.eps:
+                residual += float((torch.dot(pv, bv) / bn).item()) ** 2
+        return math.sqrt(residual)
 
     def _append(self, buffer: List[Tensor], x_flat: Tensor) -> None:
         x = x_flat.detach()
