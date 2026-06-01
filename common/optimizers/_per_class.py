@@ -100,7 +100,7 @@ class PerClassGradientOptimizer(Optimizer):
     **base_optimizer_kwargs : forwarded to base_optimizer_cls (momentum, betas, …).
     """
 
-    _VALID_STEP = ("single_forward", "multi_forward", "multi_forward_with_BN")
+    _VALID_STEP = ("single_forward", "multi_forward", "multi_forward_with_BN", "vmap")
 
     def __init__(
         self,
@@ -188,6 +188,8 @@ class PerClassGradientOptimizer(Optimizer):
                 class_grads, running_loss, counts = self._grads_single_forward(data, labels, valid)
             elif self.step_method == "multi_forward":
                 class_grads, running_loss, counts = self._grads_multi_forward(data, labels, valid)
+            elif self.step_method == "vmap":
+                class_grads, running_loss, counts = self._grads_vmap(data, labels, valid)
             else:
                 class_grads, running_loss, counts = self._grads_multi_forward_bn(data, labels, valid)
 
@@ -227,6 +229,46 @@ class PerClassGradientOptimizer(Optimizer):
             with self.timer.time_context("gradient_extraction"):
                 class_grads[i] = self._extract_flat_grad()
         return class_grads, running_loss, counts
+
+    def _grads_vmap(self, data, labels, valid):
+        """E: per-sample gradients via torch.func, scatter-averaged by class.
+
+        Computes grad of per-sample loss for all samples in (roughly) one pass,
+        then for each class averages its members' gradients -> the same per-class
+        mean subgradient the loop produces, without C separate backward passes.
+
+        Requires a functional-call-compatible model (no in-place BN stat updates
+        during the grad). Intended for no-BN models; the harness should not select
+        vmap for BN architectures.
+        """
+        from torch.func import grad, vmap, functional_call
+
+        params = {k: v.detach() for k, v in self.model.named_parameters() if v.requires_grad}
+        buffers = {k: v.detach() for k, v in self.model.named_buffers()}
+        order = list(params.keys())
+
+        def per_sample_loss(p, x, y):
+            out = functional_call(self.model, (p, buffers), (x.unsqueeze(0),))
+            return self.criterion(out, y.unsqueeze(0))
+
+        with self.timer.time_context("forward_pass"):
+            ce = torch.nn.CrossEntropyLoss()
+            with torch.no_grad():
+                full_loss = float(ce(self.model(data), labels).item())
+            g = vmap(grad(per_sample_loss), in_dims=(None, 0, 0))(params, data, labels)
+        # g[name]: [N, *param_shape] -> flatten to [N, P]
+        with self.timer.time_context("gradient_extraction"):
+            per_sample = torch.cat([g[k].reshape(data.shape[0], -1) for k in order], dim=1)
+            n = len(valid)
+            class_grads = torch.zeros(n, self._total_params, device=self.device)
+            counts = torch.zeros(n, device=self.device)
+            for i, label in enumerate(valid):
+                m = labels == label
+                cnt = int(m.sum().item())
+                counts[i] = cnt
+                if cnt > 0:
+                    class_grads[i] = per_sample[m].mean(dim=0)
+        return class_grads, full_loss, counts
 
     def _grads_multi_forward_bn(self, data, labels, valid):
         original_training = self.model.training
