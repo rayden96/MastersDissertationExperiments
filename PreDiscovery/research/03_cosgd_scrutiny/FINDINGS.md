@@ -37,4 +37,98 @@ Hypotheses under test:
   order-dependence (each vector projected against *all* others, random order).
 - **STACK** best-of-round-2 vs round-1-best COSGD vs baseline (±momentum).
 
-(Results filled in when the round-2 run completes — see `cosgd_round2.log`.)
+### Round-2 results — hard 5-class (averageable-noise regime, baseline 0.7322)
+
+**F — soft orthogonalisation is monotonically harmful here:**
+```
+orth_strength: 0.0    0.25   0.5    0.75   1.0
+accuracy:     0.7322 0.7300 0.7284 0.7262 0.7236
+```
+Peak is at α=0 (no orthogonalisation). The more you orthogonalise, the worse —
+because the per-class conflict on overlapping Gaussian blobs is *averageable
+noise, not structured interference*. This is the sharpest confirmation of the
+F5 "detection ≠ benefit" principle: COSGD removes conflict that SGD's averaging
+would have handled for free, so it only loses signal. (α=0 exactly equals
+baseline → the soft-orth interpolation is correctly implemented.)
+
+**G — conflict gating works, but needs a high threshold:**
+```
+ungated 0.7236 | gate(0.05) 0.7236 | gate(0.1) 0.7231 | gate(0.2) 0.7320
+```
+At threshold 0.2 the gate fires (skips orthogonalisation on the noisy steps) and
+recovers baseline (0.732 vs 0.724 ungated). So gating CAN rescue the noise
+regime — but the scalar mean-pairwise-cosine gate is a crude discriminator: this
+regime's conflict is many small near-orthogonal pairs (mean cos ≈ 0), not
+strongly negative, so a low threshold never triggers. **Design lesson:** a better
+gate keys on `cos(orthogonalised_dir, raw_dir)` — if orthogonalisation barely
+rotates the step, the conflict was averageable → skip. (Round 3.)
+
+### Round-2 results — CIFAR-10 (2 seeds, lr∈{0.05,0.1,0.2}, 4 epochs)
+
+**F — soft orth: full orthogonalisation again over-corrects.**
+```
+baseline 0.308 | a=0 0.312 | a=0.25 0.292 | a=0.5 0.262 | a=0.75 0.286 | a=1 0.280
+```
+Peak at α=0 again; ungated COSGD (any α>0) underperforms baseline at this budget.
+
+**G — conflict gating: THE WIN. Gated COSGD beats baseline.**
+```
+baseline 0.3075 | ungated 0.2798 | gate(0.05) 0.2823 | gate(0.10) 0.3225 |
+gate(0.20) 0.3095 | gate(0.40) 0.3080
+```
+**gate(thr=0.10) = 0.3225 vs baseline 0.3075 → +1.5pts**, flipping COSGD from a
+−2.8pt loss (ungated) to a win. First time in the whole study COSGD beats SGD on
+CIFAR-10 at matched budget. Mechanism = exactly W': orthogonalise only the steps
+with structured conflict, skip the averageable-noise steps. There is a clear
+gate sweet-spot (0.10) — too low (0.05) doesn't fire, too high (0.4) gates
+everything back to baseline.
+
+**H — PCGrad symmetric vs sequential GS: no improvement.**
+```
+baseline 0.308 | seq-GS negative 0.281 | PCGrad symmetric 0.277
+```
+Removing GS's order-dependence didn't help (slightly worse + much slower, O(C²)
+Python loop). Order-dependence is not COSGD's problem.
+
+**STACK — combined best-of-round-2:**
+```
+SGD no-mom 0.308 | SGD+mom0.9 0.412 | COSGD round-1-best 0.270 | STACK 0.276
+```
+The stack (freq+preserve+soft0.75+gate) ≈ round-1 COSGD, both well below
+SGD+momentum (0.412). NOTE the stack used orth_strength=0.75 + a fixed gate
+threshold; the *standalone* gate(0.10) at full strength (0.3225) beat it — i.e.
+**the gate is the active ingredient; soft-orth dilutes it.** The right config is
+full-strength orth + a well-tuned conflict gate, NOT soft orth.
+
+### FINAL verdict table
+
+| change | adopt? | why |
+|---|---|---|
+| A preserve_magnitude | **yes** | decouples LR; small acc gain; fixes hidden LR cut |
+| B low_memory GS | yes (but) | bit-identical; real mem win needs round-3 (don't materialise [C,P]) |
+| C freq combine default | **yes** | best + LR-robust; sum diverges |
+| D clustering | **no** | destroys accuracy (chance) on both problems |
+| E vmap grads | yes (no-BN) | exact, 1.5× faster |
+| F soft orth (α<1) | **no** | full orth over-corrects, but soft orth just dilutes the gate; gate is the real lever |
+| **G conflict gate** | **YES — the breakthrough** | gate(0.10) = +1.5pts on CIFAR, COSGD's first matched-budget win |
+| H PCGrad symmetric | no | no gain, slower; order-dependence isn't the problem |
+
+### Bottom line
+COSGD's problem was never the orthogonalisation algorithm — it was applying it
+*indiscriminately*. A conflict gate that orthogonalises only structured-conflict
+steps (and lets SGD average the rest) turns COSGD from a net loss into a net win.
+This is the same "separable from descent" (W') precondition BoGrad needs — the
+two methods unify. **Recommended canonical COSGD: freq + preserve_magnitude +
+conflict_gate(~0.1) + full-strength modified_gs_negative + vmap grads (no-BN).**
+Caveat: all CIFAR numbers are short-budget (4 epochs, 2 seeds); the gate win
+(+1.5pts) needs confirmation at more seeds / longer schedule before it's
+load-bearing for the thesis — queued next.
+
+### Synthesis so far
+The study is converging on one clear thesis-level statement:
+**COSGD's per-class orthogonalisation helps only when the inter-batch conflict is
+structured (separable from descent); on averageable-noise conflict it strictly
+hurts, monotonically in how much it orthogonalises.** The practical implication
+is that COSGD needs a *gate* that detects the regime — which is exactly the W'
+"separable from descent" criterion the BoGrad work also landed on. The two
+methods converge on the same precondition.

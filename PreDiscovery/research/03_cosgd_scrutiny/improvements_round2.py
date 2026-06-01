@@ -56,16 +56,14 @@ sgd_factory = ae1.sgd_factory
 R1 = dict(orthogonalization_method="modified_gs_negative", combine="freq", preserve_magnitude=True)
 
 
-def _best(make, tr, te, ep, lrs, factory):
-    _, blr, bacc = _sweep_lr(make, tr, te, ep, lrs, factory)
+def _best(make, tr, te, ep, lrs, factory, is_cosgd=True):
+    _, blr, bacc = _sweep_lr(make, tr, te, ep, lrs, factory, is_cosgd=is_cosgd)
     return blr, bacc
 
 
 def test_F(problem):
     make, tr, te, C = PROBLEMS[problem](); ep, lrs = EPOCHS[problem], LRS[problem]
     print(f"\n### F soft orthogonalisation (strength a) on {problem} (C={C}) ###")
-    blr, bacc = _best(make, tr, te, ep, lrs, lambda lr: sgd_factory(lr))  # baseline (no mom)
-    # NOTE baseline via sgd_factory is_cosgd handled inside _sweep_lr? -> need is_cosgd False
     bl_curve, bl_lr, bl_acc = _sweep_lr(make, tr, te, ep, lrs, lambda lr: sgd_factory(lr), is_cosgd=False)
     print(f"  baseline SGD            best lr={bl_lr:<5} acc={bl_acc:.4f}")
     for a in [0.0, 0.25, 0.5, 0.75, 1.0]:
@@ -83,7 +81,7 @@ def test_G(problem):
     _, ulr, uacc = _sweep_lr(make, tr, te, ep, lrs, lambda lr: cosgd_factory(lr=lr, **R1))
     print(f"  baseline SGD            best lr={bl_lr:<5} acc={bl_acc:.4f}")
     print(f"  COSGD ungated           best lr={ulr:<5} acc={uacc:.4f}")
-    for thr in [0.0, 0.05, 0.1, 0.2]:
+    for thr in [0.05, 0.1, 0.2, 0.4]:
         _, glr, gacc = _sweep_lr(make, tr, te, ep, lrs,
             lambda lr, thr=thr: cosgd_factory(lr=lr, conflict_gate=True, conflict_threshold=thr, **R1))
         print(f"  COSGD gate(thr={thr:<4})     best lr={glr:<5} acc={gacc:.4f}")
