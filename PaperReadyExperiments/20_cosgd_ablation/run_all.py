@@ -1,0 +1,86 @@
+"""
+Drive all COSGD-ablation axes from one entry point (Colab or local).
+
+Mirror of 10_bograd_ablation/run_all.py. Loads each axis's run.py main() and
+invokes it with a shared budget; resumable via the per-cell JobManager.
+
+    python run_all.py                          # all training axes, proxy budget
+    python run_all.py --axes 01 05 06          # subset
+    python run_all.py --smoke
+    python run_all.py --aggregate              # build 20.08 after runs
+
+20.07 (scalability) and 20.03's synthetic_dim_sweep are timing/synthetic scripts
+with their own CLIs; run them directly.
+"""
+
+from __future__ import annotations
+
+import argparse
+import importlib.util
+import sys
+import time
+from pathlib import Path
+
+_HERE = Path(__file__).resolve().parent
+
+AXES = {
+    "01": "01_gs_variant",
+    "02": "02_class_order",
+    "03": "03_prenormalize",
+    "04": "04_step_method",
+    "05": "05_combine",
+    "06": "06_base_optimizer",
+}
+
+
+def _invoke(folder: str, argv: list[str]) -> None:
+    path = _HERE / folder / "run.py"
+    spec = importlib.util.spec_from_file_location(f"axis_{folder}", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    old = sys.argv
+    sys.argv = [str(path), *argv]
+    try:
+        mod.main()
+    finally:
+        sys.argv = old
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--axes", nargs="+", default=list(AXES.keys()))
+    ap.add_argument("--bases", nargs="+", default=None)
+    ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
+    ap.add_argument("--epochs", type=int, default=10)
+    ap.add_argument("--dataset", default="cifar10")
+    ap.add_argument("--smoke", action="store_true")
+    ap.add_argument("--aggregate", action="store_true")
+    args = ap.parse_args()
+
+    t0 = time.time()
+    for num in args.axes:
+        if num not in AXES:
+            print(f"!! unknown axis {num}"); continue
+        folder = AXES[num]
+        argv = ["--dataset", args.dataset, "--seeds", *map(str, args.seeds)]
+        if args.smoke:
+            argv = ["--smoke"]
+        else:
+            argv += ["--epochs", str(args.epochs)]
+            if args.bases is not None:
+                argv += ["--bases", *args.bases]
+        print(f"\n{'='*70}\n[run_all] AXIS {num} -> {folder}  argv={argv}\n{'='*70}", flush=True)
+        try:
+            _invoke(folder, argv)
+        except SystemExit:
+            pass
+        except Exception as e:
+            print(f"!! axis {num} ({folder}) raised {type(e).__name__}: {e}", flush=True)
+
+    if args.aggregate:
+        _invoke("08_cross_summary", [])
+    print(f"\n[run_all] done in {time.time()-t0:.0f}s")
+
+
+if __name__ == "__main__":
+    main()
