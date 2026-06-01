@@ -1,11 +1,14 @@
-# Results are gitignored — regenerable from notebooks, and can be large/Drive-mounted.
+# Results are gitignored — regenerable from runners, and can be large/Drive-mounted.
 results/
-# Exception: FocusedWork keeps its results in-repo (small, hand-curated).
-!FocusedWork/results/
-!FocusedWork/results/**
+# Exception: PreDiscovery/FocusedWork keeps its results in-repo (small, hand-curated).
+!PreDiscovery/FocusedWork/results/
+!PreDiscovery/FocusedWork/results/**
 
-# Downloaded datasets (torchvision, etc.)
+# Downloaded datasets (torchvision, sklearn, HuggingFace caches, etc.)
 data/
+
+# Claude Code harness local state (lock files, worktrees)
+.claude/
 
 # Python
 __pycache__/
