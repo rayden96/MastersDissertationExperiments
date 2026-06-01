@@ -51,10 +51,27 @@ chapter, not ablated.
 - Resumable: a completed cell's `results.json` is skipped, so a dead Colab
   session re-launches and continues the sweep.
 
-## How to run (Colab or local)
+## How to run
 
+**One axis (local or Colab):**
 ```bash
 python PaperReadyExperiments/10_bograd_ablation/01_buffer_K/run.py            # full sweep
 python PaperReadyExperiments/10_bograd_ablation/01_buffer_K/run.py --smoke    # 1 base, tiny, fast
 python PaperReadyExperiments/10_bograd_ablation/01_buffer_K/plot.py
 ```
+
+**All axes from one entry point** (`run_all.py` drives every axis with a shared
+budget; resumable):
+```bash
+cd PaperReadyExperiments/10_bograd_ablation
+python run_all.py --smoke --axes 01 04          # quick shake-out
+python run_all.py --epochs 10 --seeds 2026 2027 2028   # full proxy sweep
+python run_all.py --axes 01 03 06               # subset
+python 09_cross_summary/run.py                  # build the master table
+```
+
+**Colab:** open `colab_launcher.ipynb` and run top-to-bottom. It clones the repo,
+installs deps, mounts Drive (results persist across disconnects via symlinked
+`results/` dirs + the `DISSERTATION_RESULTS_ROOT` env var), and drives the sweep.
+Re-running resumes automatically (the per-cell `JobManager` skips completed
+cells).
