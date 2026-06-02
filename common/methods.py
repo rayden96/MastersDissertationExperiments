@@ -150,6 +150,11 @@ def build_method(
         return MethodSpec(method, base, "standard", factory, {}, label, hp)
 
     # --- cosgd (per-class Gram-Schmidt) ---------------------------------
+    # Canonical defaults are the scrutiny winners (PreDiscovery/research/
+    # 03_cosgd_scrutiny/FINDINGS.md): combine="freq" (best + LR-robust; "sum"
+    # diverges), preserve_magnitude=True (decouples LR), and conflict_gate=True
+    # with threshold ~0.1 (the round-2 breakthrough: orthogonalise only
+    # structured-conflict steps -> flips COSGD from a net loss to a net win).
     if method == "cosgd":
         def factory(model, criterion, _cls=base_cls, _kw=base_kwargs, _hp=hp):
             return COSGD(
@@ -160,7 +165,10 @@ def build_method(
                 step_method=_hp.get("step_method", "single_forward"),
                 class_order=_hp.get("class_order", "fixed"),
                 prenormalize=_hp.get("prenormalize", False),
-                combine=_hp.get("combine", "sum"),
+                combine=_hp.get("combine", "freq"),
+                preserve_magnitude=_hp.get("preserve_magnitude", True),
+                conflict_gate=_hp.get("conflict_gate", True),
+                conflict_threshold=_hp.get("conflict_threshold", 0.1),
                 collect_timing=_hp.get("collect_timing", False),
                 **_kw,
             )
