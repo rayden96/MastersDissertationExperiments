@@ -32,10 +32,20 @@ view axes below all read it — they never retrain.
 
 | # | Output | Thesis |
 |---|---|---|
+| **30.00** | **convergence speed-up (epochs-to-target + speed-up factor + epoch-1 acc) — THE HEADLINE** | 5.x |
 | 30.01 | test-accuracy trajectories per dataset | 5.1 |
 | 30.02 | fixed-budget tables (10/50/100% epochs), bold best | 5.2 |
 | 30.03 | final-accuracy summary bars | 5.3 |
 | 30.09 | accuracy-vs-wall-clock Pareto per dataset | 5.9 |
+
+> **The primary question is convergence SPEED, not final accuracy.** 30.00 reports,
+> per (dataset × base optimizer), how many epochs each method needs to reach the
+> baseline's final accuracy, the speed-up factor (`baseline_epochs / method_epochs`),
+> a `wall_speedup` that folds in per-step cost, and epoch-1 accuracy (early
+> progress). `--target-frac 0.95` measures time-to-95%-of-baseline instead.
+> Early evidence (MNIST, no momentum): BoGrad ≈ **1.8× (SGD), 1.67× (RMSprop),
+> 1.25× (Adam)**; COSGD ≈ 1.0× (no speed-up). BoGrad accelerates training; COSGD
+> mainly reduces within-batch interference without accelerating convergence.
 
 **Focused sweeps** (own runs):
 

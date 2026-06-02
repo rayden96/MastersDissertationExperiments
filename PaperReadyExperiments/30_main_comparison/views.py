@@ -193,10 +193,100 @@ def view_pareto(campaign, grouped):
         print(f"  wrote {out}")
 
 
+# ---- 30.00 CONVERGENCE SPEED-UP (the headline metric) ---------------------
+def _epochs_to(curve, target):
+    """First (1-based) epoch at which curve reaches `target`, or None."""
+    for i, a in enumerate(curve):
+        if a is not None and a == a and a >= target:
+            return i + 1
+    return None
+
+
+def view_speedup(campaign, grouped, target_frac=1.0):
+    """For each (dataset, base): how many epochs each method needs to reach the
+    BASELINE's target accuracy, and the speed-up factor (baseline_epochs /
+    method_epochs). This is the primary 'does it train faster' result.
+
+    target = `target_frac` x baseline's final mean accuracy (1.0 = match baseline's
+    end-of-training accuracy; e.g. 0.95 = reach 95% of it). Also reports epoch-1
+    accuracy (early-progress) and the steps-to-target speed-up via mean step time.
+    """
+    import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
+    apply_thesis_rcparams("dense")
+
+    out_md = [f"# 30.00 Convergence speed-up (target = {target_frac:g}x baseline final acc)\n",
+              "Speed-up = baseline_epochs_to_target / method_epochs_to_target. "
+              ">1 means faster. 'wall speed-up' also folds in per-step cost.\n"]
+    out_json: Dict[str, Any] = {}
+
+    for dataset, cells in sorted(grouped.items()):
+        bases = sorted({b for b, _ in cells})
+        out_md.append(f"\n## {dataset}\n")
+        out_md.append("| base | metric | " + " | ".join(METHOD_ORDER) + " |")
+        out_md.append("|" + "---|" * (len(METHOD_ORDER) + 2))
+        # bar fig: speed-up per (base, method)
+        fig, ax = plt.subplots(figsize=(9, 5))
+        width = 0.15; x = np.arange(len(bases))
+        for dataset_method_i, method in enumerate(METHOD_ORDER):
+            speedups = []
+            for base in bases:
+                base_rows = cells.get((base, "baseline"), [])
+                meth_rows = cells.get((base, method), [])
+                base_curves = [r.get("epoch_test_acc", []) for r in base_rows if r.get("epoch_test_acc")]
+                meth_curves = [r.get("epoch_test_acc", []) for r in meth_rows if r.get("epoch_test_acc")]
+                if not base_curves or not meth_curves:
+                    speedups.append(np.nan); continue
+                bmean = np.mean([c[-1] for c in base_curves])
+                tgt = target_frac * bmean
+                b_ep = np.mean([_epochs_to(c, tgt) or len(c) + 1 for c in base_curves])
+                m_ep = np.mean([_epochs_to(c, tgt) or len(c) + 1 for c in meth_curves])
+                sp = b_ep / m_ep if m_ep > 0 else np.nan
+                speedups.append(sp)
+                # wall speed-up: fold in per-step cost
+                b_spt = _mean_std([r.get("mean_step_wall_time_s") for r in base_rows])[0]
+                m_spt = _mean_std([r.get("mean_step_wall_time_s") for r in meth_rows])[0]
+                wall_sp = sp * (b_spt / m_spt) if (m_spt and b_spt and m_spt == m_spt) else None
+                out_json[f"{dataset}/{base}/{method}"] = {
+                    "epochs_to_target": float(m_ep), "baseline_epochs": float(b_ep),
+                    "epoch_speedup": float(sp) if sp == sp else None,
+                    "wall_speedup": float(wall_sp) if wall_sp else None,
+                    "epoch1_acc": float(np.mean([c[0] for c in meth_curves])),
+                }
+            ax.bar(x + (dataset_method_i - 2) * width, [s if s == s else 0 for s in speedups],
+                   width, label=method, linestyle=METHOD_STYLE.get(method))
+        ax.axhline(1.0, color="black", lw=0.8, ls="--", label="baseline (1.0x)")
+        ax.set_xticks(x); ax.set_xticklabels(bases)
+        ax.set_ylabel("epoch speed-up vs baseline"); ax.set_title(f"30.00  {dataset} — convergence speed-up")
+        ax.legend(fontsize=8, ncol=3)
+        out = campaign / f"30_00_speedup_{dataset}.png"
+        fig.savefig(out, bbox_inches="tight"); plt.close(fig)
+        print(f"  wrote {out}")
+        # markdown rows: epoch_speedup + epoch1_acc
+        for base in bases:
+            for metric_key, label in [("epoch_speedup", "epoch speed-up"), ("epoch1_acc", "epoch-1 acc")]:
+                cellstr = []
+                for method in METHOD_ORDER:
+                    d = out_json.get(f"{dataset}/{base}/{method}", {})
+                    v = d.get(metric_key)
+                    if v is None:
+                        cellstr.append("—")
+                    elif metric_key == "epoch_speedup":
+                        cellstr.append(f"**{v:.2f}x**" if v > 1.01 else f"{v:.2f}x")
+                    else:
+                        cellstr.append(f"{v:.3f}")
+                out_md.append(f"| {base} | {label} | " + " | ".join(cellstr) + " |")
+
+    (campaign / "30_00_speedup.md").write_text("\n".join(out_md), encoding="utf-8")
+    write_json_atomic(campaign / "30_00_speedup.json", out_json)
+    print(f"  wrote {campaign/'30_00_speedup.md'}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--campaign", default=None)
-    ap.add_argument("--only", nargs="+", default=["01", "02", "03", "09"])
+    ap.add_argument("--only", nargs="+", default=["00", "01", "02", "03", "09"])
+    ap.add_argument("--target-frac", type=float, default=1.0,
+                    help="speed-up target as fraction of baseline final acc (e.g. 0.95)")
     args = ap.parse_args()
 
     campaign = _resolve_campaign(args.campaign)
@@ -206,6 +296,7 @@ def main():
     grouped = _group(rows)
     print(f"Views from {campaign} — {len(rows)} rows, {len(grouped)} datasets")
 
+    if "00" in args.only: view_speedup(campaign, grouped, args.target_frac)
     if "01" in args.only: view_trajectories(campaign, grouped)
     if "02" in args.only: view_budget_tables(campaign, grouped)
     if "03" in args.only: view_final_bars(campaign, grouped)
