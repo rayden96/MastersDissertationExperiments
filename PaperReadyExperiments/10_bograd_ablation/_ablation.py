@@ -161,7 +161,12 @@ def run_bograd_sweep(
                 lr = hp.get("lr", None)
 
                 spec = build_method(method, base, hp=hp)
-                model = get_model(model_name, num_classes=num_classes, **spec.model_kwargs)
+                # Merge the DATASET's model kwargs (e.g. in_features for MLPs,
+                # vocab_size for text) with the METHOD's (e.g. dropout_p); method
+                # overrides dataset. Without this, tabular/text models build with
+                # the wrong input dim.
+                mk = {**meta.get("model_kwargs", {}), **spec.model_kwargs}
+                model = get_model(model_name, num_classes=num_classes, **mk)
                 crit = torch.nn.CrossEntropyLoss()
 
                 meter = summarize = None
@@ -186,7 +191,7 @@ def run_bograd_sweep(
                     dataset=dataset, model=model_name, method=method,
                     base_optimizer=base, num_classes=num_classes, epochs=epochs,
                     batch_size=batch_size, seed=seed, trial_index=0, hp=hp,
-                    model_kwargs=spec.model_kwargs, log_every_n_steps=log_every,
+                    model_kwargs=mk, log_every_n_steps=log_every,
                     checkpoint_every_n_steps=1000, num_workers=num_workers,
                 )
                 t = Trainer(cfg, spec, model, train_ds, bundle.val, bundle.test,

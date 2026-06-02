@@ -158,8 +158,19 @@ class Trainer:
         from common.datasets import _targets_of
         return _targets_of(ds)
 
+    def _eff_workers(self, ds) -> int:
+        """Use 0 workers for in-memory tensor datasets / very small sets — DataLoader
+        multiprocessing adds no benefit there and is a source of flaky worker
+        crashes (e.g. on tiny tabular sets like iris/wine)."""
+        from torch.utils.data import TensorDataset
+        base = ds.dataset if isinstance(ds, Subset) else ds
+        if isinstance(base, TensorDataset) or len(ds) < 2000:
+            return 0
+        return self.config.num_workers
+
     def _train_loader(self, epoch: int) -> DataLoader:
         pin = self.device.type == "cuda"
+        nw = self._eff_workers(self.train_dataset)
         if self.config.paired:
             order = paired_shuffle(self._n_train, self.config.epochs,
                                    self.config.seed, self.config.trial_index)
@@ -167,16 +178,16 @@ class Trainer:
             sampler.set_epoch(epoch)
             self._last_order_hash = order_hash(order)
             return DataLoader(self.train_dataset, batch_sampler=sampler,
-                              num_workers=self.config.num_workers, pin_memory=pin)
+                              num_workers=nw, pin_memory=pin)
         g = torch.Generator(); g.manual_seed(self.config.seed + epoch)
         return DataLoader(self.train_dataset, batch_size=self.config.batch_size,
-                          shuffle=True, num_workers=self.config.num_workers,
+                          shuffle=True, num_workers=nw,
                           pin_memory=pin, generator=g)
 
     def _eval_loader(self, ds) -> DataLoader:
         pin = self.device.type == "cuda"
         return DataLoader(ds, batch_size=512, shuffle=False,
-                          num_workers=self.config.num_workers, pin_memory=pin)
+                          num_workers=self._eff_workers(ds), pin_memory=pin)
 
     # ---- checkpoint / resume -----------------------------------------
     def _save_checkpoint(self, tag: str = "last") -> None:

@@ -147,6 +147,7 @@ def run_bakeoff_cell(
             out_dir=out_root / "tune" / cell_tag, device=device,
             epochs=(tune_epochs or max(3, epochs // 3)), batch_size=batch_size,
             tune_seeds=[seeds[0]], search="grid",
+            model_kwargs=meta.get("model_kwargs", {}),
         )
         best_hp = tr.best_hp
         print(f"  [{dataset}/{cell_tag}] tuned -> {best_hp} (val {tr.best_val_acc:.4f})", flush=True)
@@ -164,7 +165,11 @@ def run_bakeoff_cell(
             print(f"    skip (done) {key}"); continue
 
         spec = build_method(method, base, hp=best_hp)
-        model = get_model(model_name, num_classes=num_classes, **spec.model_kwargs)
+        # Merge dataset model kwargs (in_features / vocab_size / ...) with the
+        # method's; method overrides. Without this, tabular/text models build
+        # with the wrong input dim.
+        mk = {**meta.get("model_kwargs", {}), **spec.model_kwargs}
+        model = get_model(model_name, num_classes=num_classes, **mk)
         crit = torch.nn.CrossEntropyLoss()
         meter = summarize = None
         if measure:
@@ -181,7 +186,7 @@ def run_bakeoff_cell(
             experiment=f"30_main_comparison/{dataset}", dataset=dataset, model=model_name,
             method=method, base_optimizer=base, num_classes=num_classes, epochs=epochs,
             batch_size=batch_size, seed=seed, trial_index=0, hp=best_hp,
-            model_kwargs=spec.model_kwargs, log_every_n_steps=log_every,
+            model_kwargs=mk, log_every_n_steps=log_every,
             checkpoint_every_n_steps=1000, num_workers=2, paired=True,
         )
         t = Trainer(cfg, spec, model, bundle.train, bundle.val, bundle.test,

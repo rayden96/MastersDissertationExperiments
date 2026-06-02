@@ -78,6 +78,7 @@ def tune_cell(
     search: str = "grid",
     n_random: int = 12,
     random_seed: int = 0,
+    model_kwargs: Optional[Dict[str, Any]] = None,
     get_model: Optional[Callable] = None,
 ) -> TuneResult:
     """Search `hp_axes` for one cell; select by mean val accuracy over tune_seeds.
@@ -89,6 +90,7 @@ def tune_cell(
     if get_model is None:
         from common.models import get_model as _gm
         get_model = _gm
+    base_mk = dict(model_kwargs or {})  # dataset model kwargs (in_features, etc.)
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -105,12 +107,13 @@ def tune_cell(
         accs = []
         for s in tune_seeds:
             spec = build_method(method, base, hp=hp)
-            model = get_model(model_name, num_classes=num_classes, **spec.model_kwargs)
+            mk = {**base_mk, **spec.model_kwargs}  # dataset kwargs + method overrides
+            model = get_model(model_name, num_classes=num_classes, **mk)
             cfg = TrainConfig(
                 experiment=f"_tune/{dataset}/{base}/{method}",
                 dataset=dataset, model=model_name, method=method, base_optimizer=base,
                 num_classes=num_classes, epochs=epochs, batch_size=batch_size,
-                seed=s, trial_index=0, hp=hp, model_kwargs=spec.model_kwargs,
+                seed=s, trial_index=0, hp=hp, model_kwargs=mk,
                 eval_every_epoch=True, num_workers=0,
             )
             run_dir = out_dir / f"cand{ci}_seed{s}"
