@@ -34,12 +34,16 @@ if str(_AXIS) not in sys.path:
 from _ablation import run_cosgd_sweep  # noqa: E402
 
 
+# Reclaimed FOLD (full GS + sum + cap + desc); only step_method/BN handling varies.
+RECLAIM = dict(cosgd_method="gram_schmidt_normal", class_order="desc",
+               combine="sum", combine_norm_cap=2.0)
+
+
 def build_cells():
     cells = [{"label": "baseline", "method": "baseline", "hp": {}}]
     for sm in ("single_forward", "multi_forward", "multi_forward_with_BN"):
         cells.append({"label": f"step_{sm}", "method": "cosgd",
-                      "hp": {"cosgd_method": "modified_gs_negative",
-                             "step_method": sm, "combine": "mean"}})
+                      "hp": {**RECLAIM, "step_method": sm}})
     return cells
 
 
@@ -47,17 +51,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bases", nargs="+", default=["sgd"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
-    ap.add_argument("--dataset", default="cifar10")
+    # BN handling is the point of this axis -> image datasets (no-BN cnn vs
+    # BN resnet). Accepts --datasets for run_all compatibility but defaults to
+    # the image pair; low-dim MLPs have no BN so they're not informative here.
+    ap.add_argument("--datasets", nargs="+", default=["cifar10", "cifar100"])
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--train_subset", type=int, default=None)
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
-        args.bases = ["sgd"]; args.seeds = [2026]; args.epochs = 1; args.train_subset = 2000
-    run_cosgd_sweep(axis_name=f"20_04_step_method_{args.dataset}", cells=build_cells(),
-                    bases=args.bases, dataset=args.dataset, seeds=args.seeds,
-                    epochs=args.epochs, out_root=_HERE / "results" / args.dataset,
-                    train_subset=args.train_subset)
+        args.bases = ["sgd"]; args.seeds = [2026]; args.epochs = 1
+        args.train_subset = 2000; args.datasets = ["cifar10"]
+    for ds in args.datasets:
+        run_cosgd_sweep(axis_name=f"20_04_step_method_{ds}", cells=build_cells(),
+                        bases=args.bases, dataset=ds, seeds=args.seeds,
+                        epochs=args.epochs, out_root=_HERE / "results" / ds,
+                        train_subset=args.train_subset)
 
 
 if __name__ == "__main__":

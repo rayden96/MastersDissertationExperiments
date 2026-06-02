@@ -32,12 +32,16 @@ if str(_AXIS) not in sys.path:
 from _ablation import run_cosgd_sweep  # noqa: E402
 
 
+# Reclaimed FOLD (full GS + sum + cap + desc); only prenormalize toggles.
+RECLAIM = dict(cosgd_method="gram_schmidt_normal", class_order="desc",
+               combine="sum", combine_norm_cap=2.0)
+
+
 def build_cells():
     cells = [{"label": "baseline", "method": "baseline", "hp": {}}]
-    for gs in ("modified_gs_negative", "modified_gs_normal"):
-        for pn in (False, True):
-            cells.append({"label": f"{gs}_prenorm{int(pn)}", "method": "cosgd",
-                          "hp": {"cosgd_method": gs, "prenormalize": pn, "combine": "mean"}})
+    for pn in (False, True):
+        cells.append({"label": f"prenorm{int(pn)}", "method": "cosgd",
+                      "hp": {**RECLAIM, "prenormalize": pn}})
     return cells
 
 
@@ -45,17 +49,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bases", nargs="+", default=["sgd"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
-    ap.add_argument("--dataset", default="cifar10")
+    ap.add_argument("--datasets", nargs="+", default=["iris", "wine", "breast_cancer", "digits"])
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--train_subset", type=int, default=None)
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
-        args.bases = ["sgd"]; args.seeds = [2026]; args.epochs = 1; args.train_subset = 2000
-    run_cosgd_sweep(axis_name="20_03_prenormalize", cells=build_cells(),
-                    bases=args.bases, dataset=args.dataset, seeds=args.seeds,
-                    epochs=args.epochs, out_root=_HERE / "results",
-                    train_subset=args.train_subset)
+        args.bases = ["sgd"]; args.seeds = [2026]; args.epochs = 5; args.datasets = ["iris"]
+    for ds in args.datasets:
+        run_cosgd_sweep(axis_name=f"20_03_prenormalize_{ds}", cells=build_cells(),
+                        bases=args.bases, dataset=ds, seeds=args.seeds,
+                        epochs=args.epochs, out_root=_HERE / "results" / ds,
+                        train_subset=args.train_subset)
 
 
 if __name__ == "__main__":

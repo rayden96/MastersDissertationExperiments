@@ -32,11 +32,16 @@ VARIANTS = ["gram_schmidt_normal", "gram_schmidt_negative",
             "modified_gs_normal", "modified_gs_negative"]
 
 
+# Hold the reclaimed FOLD fixed (sum+cap+desc) so this axis isolates the GS
+# variant only, not a confound with the combine rule.
+RECLAIM = dict(class_order="desc", combine="sum", combine_norm_cap=2.0)
+
+
 def build_cells():
     cells = [{"label": "baseline", "method": "baseline", "hp": {}}]
     for v in VARIANTS:
         cells.append({"label": v, "method": "cosgd",
-                      "hp": {"cosgd_method": v, "combine": "mean"}})
+                      "hp": {**RECLAIM, "cosgd_method": v}})
     return cells
 
 
@@ -44,17 +49,18 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--bases", nargs="+", default=["sgd"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
-    ap.add_argument("--dataset", default="cifar10")
+    ap.add_argument("--datasets", nargs="+", default=["iris", "wine", "breast_cancer", "digits"])
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--train_subset", type=int, default=None)
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
-        args.bases = ["sgd"]; args.seeds = [2026]; args.epochs = 1; args.train_subset = 2000
-    run_cosgd_sweep(axis_name="20_01_gs_variant", cells=build_cells(),
-                    bases=args.bases, dataset=args.dataset, seeds=args.seeds,
-                    epochs=args.epochs, out_root=_HERE / "results",
-                    train_subset=args.train_subset)
+        args.bases = ["sgd"]; args.seeds = [2026]; args.epochs = 5; args.datasets = ["iris"]
+    for ds in args.datasets:
+        run_cosgd_sweep(axis_name=f"20_01_gs_variant_{ds}", cells=build_cells(),
+                        bases=args.bases, dataset=ds, seeds=args.seeds,
+                        epochs=args.epochs, out_root=_HERE / "results" / ds,
+                        train_subset=args.train_subset)
 
 
 if __name__ == "__main__":

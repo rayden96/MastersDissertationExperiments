@@ -51,8 +51,12 @@ def main():
     ap.add_argument("--axes", nargs="+", default=list(AXES.keys()))
     ap.add_argument("--bases", nargs="+", default=None)
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
-    ap.add_argument("--epochs", type=int, default=10)
-    ap.add_argument("--dataset", default="cifar10")
+    ap.add_argument("--epochs", type=int, default=None,
+                    help="epoch override; None = each dataset's meta default")
+    # Default testbed = the low-dim ladder (COSGD's strong regime). Add
+    # mnist/cifar10 explicitly for the image check.
+    ap.add_argument("--datasets", nargs="+",
+                    default=["iris", "wine", "breast_cancer", "digits"])
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--aggregate", action="store_true")
     args = ap.parse_args()
@@ -62,11 +66,12 @@ def main():
         if num not in AXES:
             print(f"!! unknown axis {num}"); continue
         folder = AXES[num]
-        argv = ["--dataset", args.dataset, "--seeds", *map(str, args.seeds)]
+        argv = ["--datasets", *args.datasets, "--seeds", *map(str, args.seeds)]
         if args.smoke:
             argv = ["--smoke"]
         else:
-            argv += ["--epochs", str(args.epochs)]
+            if args.epochs is not None:
+                argv += ["--epochs", str(args.epochs)]
             if args.bases is not None:
                 argv += ["--bases", *args.bases]
         print(f"\n{'='*70}\n[run_all] AXIS {num} -> {folder}  argv={argv}\n{'='*70}", flush=True)

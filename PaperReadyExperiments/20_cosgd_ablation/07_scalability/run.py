@@ -49,8 +49,11 @@ from torch.utils.data import DataLoader, Subset                  # noqa: E402
 def _time_method(bundle, method, base, lr, n_steps, batch_size, device):
     """Train for n_steps, return (sec_per_step, peak_mem_mb)."""
     meta = bundle.meta
-    spec = build_method(method, base, hp={"lr": lr, "cosgd_method": "modified_gs_negative",
-                                          "combine": "mean", "collect_timing": False})
+    # Reclaimed COSGD config (the canonical one); GS variant/combine don't change
+    # the O(n^2) timing conclusion but we keep it consistent with the chapter.
+    spec = build_method(method, base, hp={"lr": lr, "cosgd_method": "gram_schmidt_normal",
+                                          "class_order": "desc", "combine": "sum",
+                                          "combine_norm_cap": 2.0, "collect_timing": False})
     model = get_model(meta["model"], num_classes=meta["num_classes"], **spec.model_kwargs).to(device)
     crit = torch.nn.CrossEntropyLoss()
     opt = spec.optimizer_factory(model, crit)

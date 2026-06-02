@@ -190,6 +190,49 @@ def _covertype_bundle(val_fraction: float, seed: int) -> DatasetBundle:
 
 
 # ---------------------------------------------------------------------------
+# Small sklearn datasets — the low-dimensional ladder where COSGD's per-class
+# orthogonalisation has the largest, most interpretable effect (see
+# PreDiscovery/research/03_cosgd_scrutiny). All in-memory, standardised features,
+# stratified train/val/test, tiny MLP.
+# ---------------------------------------------------------------------------
+_SKLEARN_SMALL = {
+    "iris":          ("load_iris", 30),
+    "wine":          ("load_wine", 30),
+    "breast_cancer": ("load_breast_cancer", 20),
+    "digits":        ("load_digits", 20),
+}
+
+
+def _sklearn_small_bundle(name: str, val_fraction: float, seed: int) -> DatasetBundle:
+    import sklearn.datasets as skd
+    from sklearn.preprocessing import StandardScaler
+
+    loader_name, epochs = _SKLEARN_SMALL[name]
+    ds = getattr(skd, loader_name)()
+    X = ds.data.astype(np.float32)
+    y = ds.target.astype(np.int64)
+    num_classes = int(y.max() + 1)
+
+    rng = np.random.default_rng(seed)
+    n = len(y); idx = rng.permutation(n)
+    n_test = max(1, int(0.25 * n))
+    test_idx, rest_idx = idx[:n_test], idx[n_test:]
+
+    # standardise on the train portion only (no leakage)
+    sc = StandardScaler().fit(X[rest_idx])
+    Xs = sc.transform(X).astype(np.float32)
+    Xt, yt = torch.from_numpy(Xs), torch.from_numpy(y)
+    full_train = TensorDataset(Xt[rest_idx], yt[rest_idx])
+    test = TensorDataset(Xt[test_idx], yt[test_idx])
+    train_sub, val_sub = stratified_val_split(full_train, val_fraction, seed)
+
+    meta = dict(num_classes=num_classes, input_kind="tabular", model="mlp",
+                model_kwargs={"in_features": X.shape[1], "hidden": (max(16, X.shape[1]),)},
+                in_features=X.shape[1], epochs=epochs, batch_size=16)
+    return DatasetBundle(train_sub, val_sub, test, meta)
+
+
+# ---------------------------------------------------------------------------
 # Text — Yahoo! Answers (HuggingFace datasets), tokenised to fixed-len id seqs
 # ---------------------------------------------------------------------------
 def _yahoo_bundle(val_fraction: float, seed: int,
@@ -308,6 +351,9 @@ def cifar10_subclass_bundle(n_subclasses: int, val_fraction: float = 0.1, seed: 
 # Registry
 # ---------------------------------------------------------------------------
 DATASETS = ("mnist", "emnist_balanced", "cifar10", "cifar100", "covertype", "yahoo_answers")
+# Low-dimensional ladder (COSGD's strong regime); registered separately so the
+# main 6-dataset bakeoff suite stays unchanged.
+SMALL_DATASETS = ("iris", "wine", "breast_cancer", "digits")
 
 
 def get_dataset(name: str, *, val_fraction: float = 0.1, seed: int = 2026,
@@ -319,11 +365,13 @@ def get_dataset(name: str, *, val_fraction: float = 0.1, seed: int = 2026,
         return _covertype_bundle(val_fraction, seed)
     if name == "yahoo_answers":
         return _yahoo_bundle(val_fraction, seed, **kwargs)
-    raise ValueError(f"Unknown dataset '{name}'. Available: {DATASETS}")
+    if name in _SKLEARN_SMALL:
+        return _sklearn_small_bundle(name, val_fraction, seed)
+    raise ValueError(f"Unknown dataset '{name}'. Available: {DATASETS + SMALL_DATASETS}")
 
 
 __all__ = [
-    "DatasetBundle", "get_dataset", "DATASETS",
+    "DatasetBundle", "get_dataset", "DATASETS", "SMALL_DATASETS",
     "stratified_val_split", "balanced_reference_subset",
     "cifar10_subclass_bundle",
 ]

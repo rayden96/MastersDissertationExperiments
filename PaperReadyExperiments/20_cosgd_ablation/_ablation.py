@@ -114,8 +114,16 @@ def run_cosgd_sweep(
         from torch.utils.data import Subset
         train_ds = Subset(train_ds, list(range(min(train_subset, len(train_ds)))))
 
+    # Adapt the reference-set size to small datasets: cap per-class samples at
+    # ~1/3 of the smallest class so tiny sets (iris ~34/class) still build a
+    # sensible balanced reference instead of silently using everything.
+    import numpy as _np
+    from common.datasets import _targets_of as _tof
+    _counts = _np.bincount(_tof(train_ds), minlength=num_classes)
+    _min_cls = int(_counts[_counts > 0].min()) if (_counts > 0).any() else 1
+    eff_ref_npc = max(1, min(ref_n_per_class, _min_cls // 3 if _min_cls >= 6 else _min_cls))
     ref_ds = balanced_reference_subset(train_ds, num_classes=num_classes,
-                                       n_per_class=ref_n_per_class, seed=2026)
+                                       n_per_class=eff_ref_npc, seed=2026)
 
     out_root = out_root or (_HERE / axis_name.split("_", 2)[-1] / "results")
     run_id = storage.new_run_id()
@@ -150,7 +158,10 @@ def run_cosgd_sweep(
                 lr = hp.get("lr", None)
 
                 spec = build_method(method, base, hp=hp)
-                model = get_model(model_name, num_classes=num_classes, **spec.model_kwargs)
+                # Merge the DATASET's model kwargs (e.g. in_features for MLPs)
+                # with the METHOD's (e.g. dropout_p); method overrides dataset.
+                mk = {**meta.get("model_kwargs", {}), **spec.model_kwargs}
+                model = get_model(model_name, num_classes=num_classes, **mk)
                 crit = torch.nn.CrossEntropyLoss()
 
                 meter = summarize = None
@@ -173,7 +184,7 @@ def run_cosgd_sweep(
                     dataset=ds_label, model=model_name, method=method,
                     base_optimizer=base, num_classes=num_classes, epochs=epochs,
                     batch_size=batch_size, seed=seed, trial_index=0, hp=hp,
-                    model_kwargs=spec.model_kwargs, log_every_n_steps=log_every,
+                    model_kwargs=mk, log_every_n_steps=log_every,
                     checkpoint_every_n_steps=1000, num_workers=num_workers,
                 )
                 t = Trainer(cfg, spec, model, train_ds, bundle.val, bundle.test,
