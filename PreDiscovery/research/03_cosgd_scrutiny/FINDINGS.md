@@ -1,5 +1,31 @@
 # COSGD scrutiny — improvement findings
 
+## HEADLINE (reclaimed COSGD on images) — read this first
+
+Reclaimed COSGD (paper `sum` + desc-sort + norm-cap, the current default) tested
+vs SGD on the IMAGE datasets that earlier looked like COSGD failures. 10 epochs,
+2 seeds, no momentum, lr=0.05, small CNNs:
+
+```
+            SGD final  reclaim(cap2)        old "improved"(gate)
+MNIST        0.925     0.972  (3.33x faster)  0.925  (no speedup)
+CIFAR-10     0.514     0.660  (3.33x faster)  0.517  (no speedup)   +14.6pts final
+```
+
+**COSGD is NOT bad on images — the earlier "flat/loss on CIFAR-10" was the wrong
+config.** The speed mechanism is `combine="sum"` (the big orthogonalised step).
+The earlier bakeoff used `combine="mean"/"freq"` or the conflict gate, both of
+which kill the big step and flatten COSGD to baseline. With the paper's `sum`
+restored, COSGD gives a **3.33x speed-up and +14.6pt final accuracy on CIFAR-10**.
+
+Nuance: on these conv nets `paper(sum)` and `reclaim(cap2)` are near-identical
+(cap rarely binds), so this run shows the win is `sum` itself; the cap's distinct
+value is on digits (dim-64 MLP) where raw `sum` diverged (0.84) and the cap fixed
+it (0.98). Both pieces justified, on different problems.
+
+Earlier-claim correction: my "sum diverges everywhere at higher dim" was too
+broad. It diverges on the digits MLP but is excellent on CIFAR/MNIST conv nets.
+
 ## CRITICAL CORRECTION (paper reproduction) — read this first
 
 The conference paper (`dissertation/ConferencePapers/Clustered_Orthogonalized_

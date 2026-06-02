@@ -1,0 +1,52 @@
+device=cuda  reclaimed COSGD on images  10 epochs, seeds=[2026, 2027], no momentum, lr=0.05
+
+================ mnist ================
+  sgd             ran
+  paper(sum)      ran
+  reclaim(cap2)   ran
+  reclaim(cap3)   ran
+  old improved    ran
+
+  target = SGD final 0.9251 @ep10
+  config             ep1    ep3    ep5   final  ep->tgt  speedup
+  sgd              0.360  0.644  0.817   0.925       10    1.00x
+  paper(sum)       0.848  0.957  0.940   0.977        2    5.00x
+  reclaim(cap2)    0.783  0.946  0.947   0.972        3    3.33x
+  reclaim(cap3)    0.848  0.952  0.940   0.975        2    5.00x
+  old improved     0.397  0.691  0.832   0.925      >10      n/a
+
+================ cifar10 ================
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+  sgd             ran
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+  paper(sum)      ran
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+  reclaim(cap2)   ran
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+  reclaim(cap3)   ran
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+Files already downloaded and verified
+  old improved    ran
+
+  target = SGD final 0.5136 @ep10
+  config             ep1    ep3    ep5   final  ep->tgt  speedup
+  sgd              0.252  0.358  0.416   0.514       10    1.00x
+  paper(sum)       0.324  0.530  0.630   0.672        3    3.33x
+  reclaim(cap2)    0.353  0.519  0.605   0.660        3    3.33x
+  reclaim(cap3)    0.321  0.510  0.615   0.677        4    2.50x
+  old improved     0.257  0.368  0.420   0.517       10    1.00x
+
