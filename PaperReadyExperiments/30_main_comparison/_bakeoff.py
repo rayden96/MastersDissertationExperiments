@@ -73,14 +73,14 @@ def hp_axes_for(base: str, method: str) -> Dict[str, List[Any]]:
                      "rmsprop": [8, 16], "adam": [64, 128]}[base]
         axes["projection_mode"] = ["negative"]
     elif method == "cosgd":
-        # Canonical config from the scrutiny study (03_cosgd_scrutiny/FINDINGS.md):
-        # freq + preserve_magnitude + conflict gate. Tune only the gate threshold
-        # (the active lever; 0.1 was the CIFAR sweet-spot, 0.0 = always-on).
-        axes["cosgd_method"] = ["modified_gs_negative"]
-        axes["combine"] = ["freq"]
-        axes["preserve_magnitude"] = [True]
-        axes["conflict_gate"] = [True]
-        axes["conflict_threshold"] = [0.0, 0.1]
+        # RECLAIMED COSGD (03_cosgd_scrutiny/FINDINGS.md): the conference-paper
+        # algorithm (full GS + desc sort + combine="sum") + a norm cap that
+        # preserves the low-dim speedup and prevents high-dim divergence. Tune
+        # only the cap (2.0 best across the dim ladder; 3.0 for safety margin).
+        axes["cosgd_method"] = ["gram_schmidt_normal"]
+        axes["class_order"] = ["desc"]
+        axes["combine"] = ["sum"]
+        axes["combine_norm_cap"] = [2.0, 3.0]
     elif method == "graddrop":
         axes["leak"] = [0.0]
     elif method == "dropout":

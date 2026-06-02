@@ -150,24 +150,29 @@ def build_method(
         return MethodSpec(method, base, "standard", factory, {}, label, hp)
 
     # --- cosgd (per-class Gram-Schmidt) ---------------------------------
-    # Canonical defaults are the scrutiny winners (PreDiscovery/research/
-    # 03_cosgd_scrutiny/FINDINGS.md): combine="freq" (best + LR-robust; "sum"
-    # diverges), preserve_magnitude=True (decouples LR), and conflict_gate=True
-    # with threshold ~0.1 (the round-2 breakthrough: orthogonalise only
-    # structured-conflict steps -> flips COSGD from a net loss to a net win).
+    # Canonical defaults = the "RECLAIMED COSGD" from the scrutiny + paper
+    # reproduction (PreDiscovery/research/03_cosgd_scrutiny/FINDINGS.md): the
+    # CONFERENCE-PAPER algorithm — full classical Gram-Schmidt, descending-
+    # magnitude sort, combine="sum" — PLUS a single safety addition,
+    # combine_norm_cap=2.0, which preserves sum's big-step low-dim speedup
+    # (iris 5.6x, wine 3.0x) while preventing the high-dim divergence the raw
+    # paper version suffers (digits: 0.84 BROKEN -> 2.25x with the cap).
+    # The earlier CIFAR-tuned defaults (freq+preserve+conflict_gate) were
+    # REVERTED — they destroyed COSGD's intended low-dim advantage.
     if method == "cosgd":
         def factory(model, criterion, _cls=base_cls, _kw=base_kwargs, _hp=hp):
             return COSGD(
                 model.parameters(),
                 base_optimizer_cls=_cls,
                 model=model, criterion=criterion,
-                orthogonalization_method=_hp.get("cosgd_method", "modified_gs_negative"),
+                orthogonalization_method=_hp.get("cosgd_method", "gram_schmidt_normal"),
                 step_method=_hp.get("step_method", "single_forward"),
-                class_order=_hp.get("class_order", "fixed"),
+                class_order=_hp.get("class_order", "desc"),
                 prenormalize=_hp.get("prenormalize", False),
-                combine=_hp.get("combine", "freq"),
-                preserve_magnitude=_hp.get("preserve_magnitude", True),
-                conflict_gate=_hp.get("conflict_gate", True),
+                combine=_hp.get("combine", "sum"),
+                combine_norm_cap=_hp.get("combine_norm_cap", 2.0),
+                preserve_magnitude=_hp.get("preserve_magnitude", False),
+                conflict_gate=_hp.get("conflict_gate", False),
                 conflict_threshold=_hp.get("conflict_threshold", 0.1),
                 collect_timing=_hp.get("collect_timing", False),
                 **_kw,

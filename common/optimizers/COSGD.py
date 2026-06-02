@@ -217,6 +217,7 @@ class COSGD(PerClassGradientOptimizer):
         combine: str = "sum",
         preserve_magnitude: bool = False,
         max_rescale: float = 10.0,
+        combine_norm_cap: float = 0.0,
         low_memory: bool = False,
         cluster_k: int = 0,
         cluster_iters: int = 5,
@@ -248,6 +249,14 @@ class COSGD(PerClassGradientOptimizer):
         #    the baseline regardless of how much orthogonalisation/combine shrank it.
         self.preserve_magnitude = bool(preserve_magnitude)
         self.max_rescale = float(max_rescale)
+        # Reclaimed-COSGD: norm cap on the SUMMED combined update. The paper's
+        # combine="sum" is what produces the low-dim speedup (a bigger, well-
+        # directed step), but at high class-count it over-scales and diverges.
+        # combine_norm_cap > 0 caps ||combined|| at  cap * mean(per-class norm):
+        # with few classes the sum's norm is below the cap (win preserved), with
+        # many classes it clips (divergence prevented). 0 = no cap. Use with
+        # combine="sum" for the dimensionality-adaptive "reclaimed" config.
+        self.combine_norm_cap = float(combine_norm_cap)
         # B: in-place GS + no second [C,P] alloc (modified_gs_* methods only).
         self.low_memory = bool(low_memory)
         # D: cosine k-means the C per-class grads into K<=C clusters, orthogonalise
@@ -376,6 +385,16 @@ class COSGD(PerClassGradientOptimizer):
             if cn > self.eps:
                 scale = (target_norm / cn).clamp(max=self.max_rescale)
                 combined = combined * scale
+
+        # Reclaimed-COSGD norm cap: only clip when the summed update would exceed
+        # cap * mean per-class norm. Few classes -> below cap (sum's big step
+        # preserved -> low-dim speedup); many classes -> clipped (no divergence).
+        if self.combine_norm_cap > 0.0:
+            per_class_mean_norm = class_grads.norm(dim=1).mean()
+            cap = self.combine_norm_cap * per_class_mean_norm
+            cn = combined.norm()
+            if cn > cap > self.eps:
+                combined = combined * (cap / cn)
         return combined
 
 

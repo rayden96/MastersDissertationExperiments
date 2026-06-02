@@ -1,5 +1,100 @@
 # COSGD scrutiny — improvement findings
 
+## CRITICAL CORRECTION (paper reproduction) — read this first
+
+The conference paper (`dissertation/ConferencePapers/Clustered_Orthogonalized_
+Stochastic_Gradient_Descent.pdf`) showed COSGD's wins on **low-dimensional**
+problems. Reproduced on sklearn datasets (paper-faithful config = classical full
+Gram-Schmidt + descending-magnitude sort + combine=sum, NO gate, NO norm):
+
+```
+dataset        dim  cosgd_paper speedup   cosgd_IMPROVED speedup
+iris            4   5.60x  (ep5 0.921)    1.87x   <- improvements HALVED+ the win
+wine           13   3.00x                 0.86x   <- improved is SLOWER than SGD
+breast_cancer  30   1.50x                 1.50x
+digits         64   BROKE (0.84 stuck)    1.00x
+```
+
+**Two findings that overturn the earlier "round 1/2" conclusions:**
+1. **My CIFAR-tuned "improvements" (esp. the conflict gate) DESTROY COSGD's
+   low-dim advantage.** On iris/wine the gate fires and skips the orthogonalisation
+   that produces the 3-5x speedup. The round-2 gate was tuned on CIFAR (a regime
+   where COSGD can't win anyway) and is actively harmful on the regime where COSGD
+   shines. **The gate must NOT be a blanket default.**
+2. **Plain paper-COSGD breaks at dim 64** (combine=sum over-scales the summed
+   orthogonal vectors). So neither extreme is right.
+
+The earlier round-1/2 study was correct *for CIFAR* but I wrongly generalised it
+into the registry defaults. COSGD is fundamentally a **low-dimensional** method
+(the paper says so explicitly; high-dim random gradients are already near-
+orthogonal so there's little to gain). The improvement target is therefore:
+**preserve the low-dim 3-5x win while not breaking at higher dim** — see
+reclaim_lowdim.py. The CIFAR "make COSGD win" framing was misguided; COSGD's
+value lives on small/low-dim problems, exactly as the paper found.
+
+### Reclaim study (reclaim_lowdim.py): can we keep low-dim win AND fix high-dim?
+
+Speed-up vs SGD (epochs to SGD's final acc), 3 seeds, across the dim ladder:
+
+```
+config            iris(4)  wine(13)  bc(30)  digits(64)
+paper(sum)         5.60x    3.00x     1.50x   BROKEN(0.84)
+full+mean          1.33x    1.50x     1.50x   0.90x
+full+freq          1.33x    1.20x     1.50x   0.86x
+full+freq+presv    0.97x    1.00x     1.00x   1.00x
+neg+freq+presv     0.97x    1.00x     1.00x   1.00x
+improved(gate)     1.87x    0.86x     —       (gate kills low-dim)
+```
+
+**Conclusions (decisive):**
+1. **`combine=sum` (the paper's original) is the source of the low-dim win** —
+   5.6x on iris, 3x on wine — and NOTHING else comes close on low-dim. The
+   "bigger summed step" IS the mechanism; mean/freq shrink it back to ~SGD and
+   kill the speed-up.
+2. **`sum` is also what breaks at dim 64** (over-scales). mean/freq fix the
+   breakage but only reach ~SGD parity there — i.e. at higher dim COSGD has no
+   advantage to preserve anyway (paper's exact point: high-dim grads already
+   near-orthogonal).
+3. **preserve_magnitude HURTS on low-dim** (0.97x iris) — it cancels the
+   "bigger step" that sum provides. Another CIFAR-tuned change that's wrong here.
+4. **The gate is strictly harmful on low-dim.**
+
+### THE RIGHT DESIGN: dimensionality-adaptive combine
+- Low-dim / few-class (where COSGD wins): **`combine=sum`, full GS, desc sort,
+  no gate, no preserve** — the paper's original. Keep it.
+- High-dim (where sum diverges and COSGD can't win): fall back to `mean`
+  (numerically safe, ~SGD parity).
+A simple, principled switch: use `sum` but **cap the combined-update norm at
+(num_classes x mean per-class norm)** — preserves sum's big step when classes
+are few/aligned, prevents the dim-64 blow-up.
+
+### RECLAIMED COSGD — IMPLEMENTED & VALIDATED (best result of the study)
+
+`combine="sum" + full classical GS + desc-sort + combine_norm_cap=2.0`
+(no gate, no preserve, no normalize):
+
+```
+dataset        dim  paper(sum)     reclaim cap2   improved(gate)
+iris            4   5.60x          5.60x          1.87x
+wine           13   3.00x          3.00x          0.86x
+breast_cancer  30   1.50x          1.50x          1.50x
+digits         64   BROKE(0.84)    2.25x  <-FIX   1.00x
+```
+
+The norm cap is invisible on low-dim (sum's norm < cap -> paper win preserved
+exactly) and clips only when the summed step would diverge (digits): it turned
+COSGD's worst failure (0.842, non-converging) into a **2.25x speed-up** (8 vs 18
+epochs to SGD's final acc). cap=2 best; cap=4 too loose at high dim (1.12x).
+
+**ADOPTED as the COSGD registry default**, reverting the harmful CIFAR-tuned
+gate+freq+preserve defaults. Canonical COSGD is now the paper's algorithm
+(sum + full GS + desc-magnitude sort) + a norm cap of 2.0 as the only addition.
+This both restores the paper's documented low-dim wins and extends them to a
+regime (digits, dim 64) where the original diverged.
+
+---
+
+
 Implement-and-measure study of COSGD design changes, each tested for what it
 targets, with/without, across problems of increasing realism (2D blobs → hard
 5-class blobs → CIFAR-10 small CNN). Code: `improvements_AE.py` (round 1),
