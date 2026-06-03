@@ -136,8 +136,15 @@ def run_cosgd_sweep(
         out_root = storage.persistent_dir(f"20_cosgd_ablation/{axis_name}", *sub)
     else:
         out_root = storage.persistent_dir(f"20_cosgd_ablation/{axis_name}")
-    run_id = storage.new_run_id()
-    axis_dir = Path(out_root) / f"run_{run_id}"
+    # STABLE run dir keyed by the sweep config (NOT a fresh timestamp), so a
+    # re-run reuses the same cells/ and the JobManager SKIPS completed cells
+    # instead of starting over.
+    cfg_sig = storage.config_hash({
+        "axis": axis_name, "dataset": ds_label, "bases": list(bases),
+        "seeds": list(seeds), "epochs": epochs, "batch_size": batch_size,
+        "cells": [c.get("label") for c in cells],
+    })
+    axis_dir = Path(out_root) / f"run_{cfg_sig}"
     jm = JobManager(axis_dir / "cells")
     axis_dir.mkdir(parents=True, exist_ok=True)
 

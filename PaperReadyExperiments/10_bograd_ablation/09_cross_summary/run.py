@@ -31,7 +31,11 @@ for p in (str(_REPO), str(_PRE)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from common.storage import read_json, write_json_atomic  # noqa: E402
+from common.storage import read_json, write_json_atomic, get_results_root  # noqa: E402
+
+# Axes persist under get_results_root() (Drive on Colab) as
+# 10_bograd_ablation/<axis_name>/...  where axis_name is e.g. '10_01_buffer_K'.
+_RESULTS_BASE = get_results_root() / "10_bograd_ablation"
 
 # Axis folder -> human label
 AXES = {
@@ -88,8 +92,19 @@ def build_master(axis_filter: Optional[str]) -> Dict[str, Any]:
     for folder, label in AXES.items():
         if axis_filter and axis_filter not in folder:
             continue
-        axis_dir = _AXIS_ROOT / folder
-        for summary in _latest_summaries(axis_dir):
+        # Gather from BOTH the persistent (Drive) location and repo-local. The
+        # harness names per-run dirs by full axis_name ('10_<folder>'), and some
+        # axes nest per-base/per-dataset subdirs, so glob by the '10_<folder>'
+        # prefix and also the bare folder for older layouts.
+        prefix = f"10_{folder}"
+        summaries = []
+        for base_dir in (_RESULTS_BASE, _AXIS_ROOT):
+            if not base_dir.exists():
+                continue
+            for d in base_dir.glob(f"{prefix}*"):
+                summaries += _latest_summaries(d)
+            summaries += _latest_summaries(base_dir / folder)
+        for summary in summaries:
             cells = summary.get("cells", [])
             # group by base
             bases = sorted({e["base"] for e in cells})
@@ -128,8 +143,13 @@ def main():
     args = ap.parse_args()
 
     master = build_master(args.axis)
+    # Write to BOTH the persistent (Drive) location and repo-local so the master
+    # table survives a Colab session end.
+    persist_dir = _RESULTS_BASE / "09_cross_summary"
+    persist_dir.mkdir(parents=True, exist_ok=True)
     out = _HERE / "master_table.json"
-    write_json_atomic(out, master)
+    for d in (persist_dir, _HERE):
+        write_json_atomic(d / "master_table.json", master)
 
     print(f"\n=== BoGrad master table ({master['n']} rows) ===")
     hdr = f"{'axis':<26}{'base':<9}{'best cell':<22}{'acc':>8}{'d-base':>8}{'I_btwn32':>10}{'cos':>8}"

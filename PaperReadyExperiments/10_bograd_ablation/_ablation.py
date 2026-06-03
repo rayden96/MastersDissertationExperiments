@@ -127,9 +127,25 @@ def run_bograd_sweep(
     ref_ds = balanced_reference_subset(train_ds, num_classes=num_classes,
                                        n_per_class=ref_n_per_class, seed=2026)
 
-    out_root = out_root or (_HERE / axis_name.split("_", 2)[-1] / "results")
-    run_id = storage.new_run_id()
-    axis_dir = Path(out_root) / f"run_{run_id}"
+    # Persist under get_results_root() (Drive on Colab) keyed by axis_name so
+    # outputs survive a session end without notebook symlinks. The caller's
+    # out_root (local _HERE/results/<sub>) contributes only its trailing sub-parts.
+    if out_root is not None:
+        op = Path(out_root)
+        sub = op.parts[op.parts.index("results") + 1:] if "results" in op.parts else ()
+        persist_root = storage.persistent_dir(f"10_bograd_ablation/{axis_name}", *sub)
+    else:
+        persist_root = storage.persistent_dir(f"10_bograd_ablation/{axis_name}")
+
+    # STABLE run dir keyed by the sweep config (NOT a fresh timestamp), so
+    # re-running the same sweep reuses the same cells/ dir and the JobManager
+    # SKIPS already-completed cells instead of starting over.
+    cfg_sig = storage.config_hash({
+        "axis": axis_name, "dataset": dataset, "bases": list(bases),
+        "seeds": list(seeds), "epochs": epochs, "batch_size": batch_size,
+        "cells": [c.get("label") for c in cells],
+    })
+    axis_dir = persist_root / f"run_{cfg_sig}"
     jm = JobManager(axis_dir / "cells")
     axis_dir.mkdir(parents=True, exist_ok=True)
 
