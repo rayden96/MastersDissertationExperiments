@@ -72,6 +72,22 @@ def get_results_root() -> Path:
     return root
 
 
+def persistent_dir(experiment: str, *parts: str) -> Path:
+    """A durable output directory under get_results_root(), keyed by experiment.
+
+    This is THE way experiment scripts should choose where to write, so outputs
+    survive a Colab session end whenever DISSERTATION_RESULTS_ROOT (or the Drive
+    mount) is set — without relying on notebook-side symlinks. Falls back to the
+    local ./results root otherwise.
+
+    e.g. persistent_dir("20_cosgd_ablation/05_combine", "iris")
+         -> <drive>/dissertation/results/20_cosgd_ablation/05_combine/iris
+    """
+    d = get_results_root().joinpath(experiment, *parts)
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
 # ---------------------------------------------------------------------------
 # Run identity
 # ---------------------------------------------------------------------------
@@ -202,6 +218,7 @@ def load_checkpoint(path: os.PathLike | str, map_location: Any = "cpu") -> Optio
 __all__ = [
     "IS_COLAB",
     "get_results_root",
+    "persistent_dir",
     "new_run_id",
     "config_hash",
     "git_sha",

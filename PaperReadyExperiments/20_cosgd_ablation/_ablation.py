@@ -125,7 +125,17 @@ def run_cosgd_sweep(
     ref_ds = balanced_reference_subset(train_ds, num_classes=num_classes,
                                        n_per_class=eff_ref_npc, seed=2026)
 
-    out_root = out_root or (_HERE / axis_name.split("_", 2)[-1] / "results")
+    # Persist under get_results_root() (Drive on Colab) keyed by axis_name, so
+    # outputs survive a session end without relying on notebook symlinks. The
+    # caller's `out_root` (a local _HERE/results/<ds> path) is used only for its
+    # trailing dataset/base sub-parts; the ROOT is always the persistent one.
+    if out_root is not None:
+        # take sub-parts after the axis 'results' dir (e.g. '<ds>' or '<ds>/<base>')
+        op = Path(out_root)
+        sub = op.parts[op.parts.index("results") + 1:] if "results" in op.parts else ()
+        out_root = storage.persistent_dir(f"20_cosgd_ablation/{axis_name}", *sub)
+    else:
+        out_root = storage.persistent_dir(f"20_cosgd_ablation/{axis_name}")
     run_id = storage.new_run_id()
     axis_dir = Path(out_root) / f"run_{run_id}"
     jm = JobManager(axis_dir / "cells")

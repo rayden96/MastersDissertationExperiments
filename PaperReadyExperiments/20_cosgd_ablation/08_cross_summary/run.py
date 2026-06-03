@@ -32,7 +32,11 @@ for p in (str(_REPO), str(_PRE)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
-from common.storage import read_json, write_json_atomic  # noqa: E402
+from common.storage import read_json, write_json_atomic, get_results_root  # noqa: E402
+
+# Axes now persist under get_results_root() (Drive on Colab). Scan there; fall
+# back to the repo-local axis folders for any results produced before this change.
+_RESULTS_BASE = get_results_root() / "20_cosgd_ablation"
 
 AXES = {
     "01_gs_variant": "GS variant",
@@ -74,10 +78,27 @@ def _baseline(cells, base):
     return None
 
 
+def _axis_summaries(folder: str):
+    """Summaries for an axis from BOTH the persistent (Drive) location and the
+    repo-local one. The harness persists each run under a dir named by the full
+    axis_name, e.g. '20_05_combine_iris' (= '20_' + folder + '_<ds>'), so we glob
+    by that prefix rather than the bare AXES-key folder name."""
+    prefix = f"20_{folder}"          # e.g. 05_combine -> 20_05_combine
+    out = []
+    for base in (_RESULTS_BASE, _AXIS_ROOT):
+        if not base.exists():
+            continue
+        for d in base.glob(f"{prefix}*"):   # 20_05_combine, 20_05_combine_iris, ...
+            out += _latest_summaries(d)
+        # also the bare folder (older layout / repo-local results dir)
+        out += _latest_summaries(base / folder)
+    return out
+
+
 def build():
     rows = []
     for folder, label in AXES.items():
-        for summary in _latest_summaries(_AXIS_ROOT / folder):
+        for summary in _axis_summaries(folder):
             cells = summary.get("cells", [])
             for base in sorted({e["base"] for e in cells}):
                 bcells = [e for e in cells if e["base"] == base]
@@ -114,7 +135,10 @@ def build():
 
 def contrast():
     """COSGD vs BoGrad: which interference axis each one moves."""
-    bograd_mt = _REPO / "PaperReadyExperiments" / "10_bograd_ablation" / "09_cross_summary" / "master_table.json"
+    # prefer the persistent (Drive) BoGrad master table, fall back to repo-local
+    bograd_mt = get_results_root() / "10_bograd_ablation" / "09_cross_summary" / "master_table.json"
+    if not bograd_mt.exists():
+        bograd_mt = _REPO / "PaperReadyExperiments" / "10_bograd_ablation" / "09_cross_summary" / "master_table.json"
     out = {"cosgd_moves_I_inter": None, "bograd_moves_I_between": None}
     cos = build()
     cos_di = [r["delta_I_inter"] for r in cos["rows"] if r.get("delta_I_inter") is not None]
@@ -132,10 +156,16 @@ def contrast():
 
 
 def main():
+    # Write to BOTH the persistent (Drive) location and the repo-local folder so
+    # the master tables survive a Colab session end.
+    out_dir = _RESULTS_BASE / "08_cross_summary"
+    out_dir.mkdir(parents=True, exist_ok=True)
     master = build()
-    write_json_atomic(_HERE / "master_table.json", master)
     ctr = contrast()
-    write_json_atomic(_HERE / "mechanism_contrast.json", ctr)
+    for d in (out_dir, _HERE):
+        write_json_atomic(d / "master_table.json", master)
+        write_json_atomic(d / "mechanism_contrast.json", ctr)
+    print(f"\n(also persisted to {out_dir})", flush=True)
 
     print(f"\n=== COSGD master table ({master['n']} rows) ===")
     hdr = f"{'axis':<22}{'base':<9}{'best cell':<26}{'acc':>8}{'d-acc':>8}{'I_inter':>9}{'dI_int':>8}{'cos':>8}"
