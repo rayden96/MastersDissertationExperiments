@@ -50,16 +50,32 @@ AXES = {
 }
 
 
+def _run_rank(run_dir: Path) -> tuple:
+    """Rank a run for 'best per parent': prefer MOST cells (most complete), then
+    most recent mtime. Robust to mixed run-dir naming (old timestamps vs new
+    config-hash names) where a plain string sort would mis-order. With one
+    complete run + several partial re-runs, the complete one always wins."""
+    try:
+        n_cells = len(read_json(run_dir / "summary.json").get("cells", []))
+    except Exception:
+        n_cells = 0
+    try:
+        mtime = (run_dir / "summary.json").stat().st_mtime
+    except Exception:
+        mtime = 0.0
+    return (n_cells, mtime)
+
+
 def _latest_summaries(axis_dir: Path) -> List[Dict[str, Any]]:
-    """All summary.json under an axis folder's results/** (newest run per leaf)."""
+    """One summary per parent dir, choosing the most-complete/most-recent run, so
+    duplicate re-runs never need manual deletion."""
     out = []
     if not axis_dir.exists():
         return out
-    # axes may nest results/<base>/run_* or results/run_*; collect newest per parent
     by_parent: Dict[Path, Path] = {}
     for s in axis_dir.rglob("summary.json"):
         parent = s.parent.parent  # the results/<...>/ dir containing run_<id>/
-        if parent not in by_parent or s.parent.name > by_parent[parent].name:
+        if parent not in by_parent or _run_rank(s.parent) > _run_rank(by_parent[parent]):
             by_parent[parent] = s.parent
     for run_dir in by_parent.values():
         try:
