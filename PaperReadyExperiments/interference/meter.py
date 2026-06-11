@@ -6,20 +6,23 @@ Computes, on a logged step:
 
   §03 inter-batch (within current batch, across per-subgroup subgradients):
     - cancellation index   I_inter = ||sum_c g_{t,c}|| / sum_c ||g_{t,c}||
-    - pairwise cosine stats (frac_neg, mean cos, full distribution)
+    - pairwise cosine stats (frac_neg, mean cos)
     - magnitude stats       (mean, std, max/min ratio of class norms)
     - useful / wasted       decomposition of each subgrad against ref direction
     - useful descent frac   of the *batch* gradient against ref direction
 
   §04 between-batch (within a rolling K-window of applied updates):
     - cancellation index   I_between_K = ||theta_t - theta_{t-K}|| / sum ||u_i||
-    - pairwise cosine stats within the window
-    - mean cosine as a function of lag
+    - pairwise cosine stats within the window (pooled; a lag-resolved
+      cos(u_t,u_{t-k}) vs k profile is a planned addition — see
+      DISSERTATION_OUTLINE.md D.4)
     - useful path frac     against the window-start reference direction
 
-  Per-step loss-decrease deficit:
-    D_t = lr * ( <ref_grad, eff_grad> - ||ref_grad||^2 )
-    where eff_grad = -u_t / lr (recovered from the applied parameter delta).
+  Per-step first-order loss-decrease deficit (>= 0; larger = more interference):
+    D_t = <g_tilde, u_t> + lr * ||g_tilde||^2
+    i.e. the first-order reference-loss change of the applied update u_t minus
+    that of the ideal SGD step u_ideal = -lr*g_tilde. 0 when u_t is as
+    descent-effective as the ideal; grows as interference steals descent.
 
   Sparse measured-loss calibration:
     reference loss recorded at each ref refresh.
@@ -147,29 +150,30 @@ class InterferenceMeter:
 
         # Per-step deficit using the *current* (potentially stale) ref_grad.
         #
-        # General form:  D = <g_tilde, u_ideal> - <g_tilde, u_t>,  the shortfall
-        # in first-order loss decrease of the applied update u_t relative to an
-        # ideal full-batch update u_ideal.
+        # D_t = <g_tilde, u_t> - <g_tilde, u_ideal>   (>= 0; larger = worse):
+        # the first-order reference-loss decrease the applied update u_t FAILED
+        # to achieve relative to the ideal full-batch update u_ideal. <g_tilde,u>
+        # is the first-order change in reference loss under update u; the ideal
+        # step is the most descent-effective, so the actual step's change is >=
+        # the ideal's and the (non-negative) gap is the interference deficit.
         #
-        # SGD yardstick: u_ideal = -lr * g_tilde, so
-        #   D_t = <g_tilde, -lr*g_tilde> - <g_tilde, u_t>
-        #       = lr * ( <g_tilde, -u_t/lr> - ||g_tilde||^2 )
-        # which is exactly the original expression — kept as the cross-method
-        # common scale and for backward compatibility.
+        # SGD yardstick: u_ideal = -lr*g_tilde  =>  D_t = g_dot_u + lr*||g~||^2.
+        # (Sign convention: positive = hurt; matches FocusedWork/03 prose.)
         D_t = float("nan")
         D_t_precond = float("nan")
         if self.ref_grad is not None:
             g_dot_u = torch.dot(self.ref_grad, u_t).item()
             ref_sq = torch.dot(self.ref_grad, self.ref_grad).item()
             # SGD-yardstick ideal: u_ideal = -lr * g_tilde
-            D_t = (-self.lr * ref_sq) - g_dot_u
+            D_t = g_dot_u + self.lr * ref_sq
             self.cum_deficit += D_t
             self.cum_deficit_count += 1
 
-            # Optional per-optimiser ideal (isolates preconditioning).
+            # Optional per-optimiser ideal (isolates preconditioning); same sign
+            # convention with u_ideal = the optimiser's own response to g_tilde.
             u_ideal = self.problem.preconditioned_ideal(self.ref_grad)
             if u_ideal is not None:
-                D_t_precond = torch.dot(self.ref_grad, u_ideal).item() - g_dot_u
+                D_t_precond = g_dot_u - torch.dot(self.ref_grad, u_ideal).item()
                 self.cum_deficit_precond += D_t_precond
                 self.cum_deficit_precond_count += 1
 

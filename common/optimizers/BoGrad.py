@@ -45,8 +45,11 @@ What changed vs. the original BOSGD
    raw gradients.
 
 2. orth_method option. "sequential" (default, original BOSGD behaviour),
-   "qr" (true orthogonal projection, provided for Exp 4.3 comparison),
-   "householder" (reserved — not yet implemented; see TODO).
+   "qr" (true orthogonal projection via reduced QR, for the Exp 10.04 method
+   comparison), "householder" (also implemented; Householder-QR reflections give
+   the SAME projector onto span(buffer)^perp as "qr" — numerically identical, so
+   10.04 reports qr/householder as one "true-orthogonal" arm against the soft
+   "sequential" one).
 
 3. projection_scope option. "per_tensor" (default, original behaviour) or
    "global" (one flat buffer for all parameters together).
@@ -117,14 +120,20 @@ class BoGrad(Optimizer):
           re-applies what recent steps already did, while preserving any
           destructive components. Useful for ablating which kind of
           interference (destructive vs redundant) actually slows training.
-    orth_method : {"sequential", "qr"}, default "sequential"
+    orth_method : {"sequential", "qr", "householder"}, default "sequential"
         - "sequential": iteratively subtract ⟨x, b_i⟩ b_i for each b_i in the
           buffer. NOT a true orthogonal projection onto span(B)^⊥ (since the
           buffer isn't mutually orthogonalised), but empirically this is the
           *right* amount of correction — IJCNN's working algorithm. USE THIS.
         - "qr": stack the buffer, QR-decompose, project onto span(B)^⊥.
           Mathematically cleaner; empirically more aggressive and tends to
-          hurt training. Provided for Experiment 4.3 comparisons only.
+          hurt training. Provided for the Exp 10.04 comparison only.
+        - "householder": the same true-orthogonal projector as "qr" but obtained
+          via Householder-QR reflections — numerically identical results (10.04
+          treats qr/householder as a single "true-orthogonal" arm). Under
+          projection_mode negative/positive, both qr and householder fall back to
+          "sequential" (per-component sign-gating has no orthogonal-projector
+          analogue).
     projection_scope : {"per_tensor", "global"}, default "per_tensor"
         Where the buffer lives and what it spans.
     store_normalised : bool, default True

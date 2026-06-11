@@ -66,9 +66,9 @@ For SGD with $u_t = -\eta g_t$:
 - *Actual first-order*: $\Delta L_t^{\text{first}} \approx -\eta\, \langle\tilde g_t,\, g_t\rangle$.
 - *Per-step first-order deficit*:
 
-$$D_t \;=\; \Delta L_t^{\text{ideal}} - \Delta L_t^{\text{first}} \;=\; -\eta\,\lVert\tilde g_t\rVert^2 + \eta\,\langle\tilde g_t,\, g_t\rangle \;=\; \eta\bigl(\langle\tilde g_t,\, g_t\rangle - \lVert\tilde g_t\rVert^2\bigr).$$
+$$D_t \;=\; \Delta L_t^{\text{first}} - \Delta L_t^{\text{ideal}} \;=\; -\eta\,\langle\tilde g_t,\, g_t\rangle + \eta\,\lVert\tilde g_t\rVert^2 \;=\; \eta\bigl(\lVert\tilde g_t\rVert^2 - \langle\tilde g_t,\, g_t\rangle\bigr) \;\ge\; 0.$$
 
-A positive $D_t$ means the SGD step's first-order loss-decrease is less than the full-batch step's would have been — the per-step training-hurt attribution. If $g_t = \tilde g_t$ exactly, $D_t = 0$. If $g_t$ is anti-parallel to $\tilde g_t$, $D_t = 2\eta\lVert\tilde g_t\rVert^2$.
+A positive $D_t$ means the SGD step's first-order loss-decrease is less than the full-batch step's would have been — the per-step training-hurt attribution (the deficit is **non-negative**, and **larger = more hurt**). If $g_t = \tilde g_t$ exactly, $D_t = 0$. If $g_t$ is anti-parallel to $\tilde g_t$, $D_t = 2\eta\lVert\tilde g_t\rVert^2$. (This is the sign convention implemented in `interference/meter.py`: `D_t = <g_tilde, u_t> + lr*||g_tilde||^2`, recovering $u_t$ from the applied delta.)
 
 For SGD with momentum, replace $g_t$ with the velocity $v_t$ in the actual term: $\Delta L_t^{\text{first}} \approx -\eta\, \langle\tilde g_t,\, v_t\rangle$. The ideal can be defined either as one full-batch SGD step ($-\eta\lVert\tilde g_t\rVert^2$) or as one full-batch *momentum* step under a counterfactual full-batch velocity buffer; the SGD-step ideal is simpler and is what we use as the default.
 
@@ -82,7 +82,7 @@ The full-batch loss $L(\theta_t; \mathcal{D})$ and $L(\theta_{t+1}; \mathcal{D})
 - mean and distribution of $I_{\text{inter}}(t)$.
 - mean useful descent fraction across logged steps.
 - correlation coefficients (across logged steps within a run): $I_{\text{inter}}$ vs $D_t$, and mean pairwise cosine vs $D_t$. Tells us whether the geometric/angle summaries actually predict training-hurt at the per-step level — i.e. whether the angle-only working assumption holds.
-- $\sum_t D_t^{\text{meas}} := \sum_t (\Delta L_t^{\text{ideal}} - \Delta L_t^{\text{meas}})$ on the sparse calibration grid. If this tracks $\sum_t D_t$ closely, the first-order accounting is sufficient; if it diverges, second-order effects matter and the framework needs to expand.
+- $\sum_t D_t^{\text{meas}} := \sum_t (\Delta L_t^{\text{meas}} - \Delta L_t^{\text{ideal}})$ on the sparse calibration grid (same positive-=-hurt convention as $D_t$). If this tracks $\sum_t D_t$ closely, the first-order accounting is sufficient; if it diverges, second-order effects matter and the framework needs to expand.
 
 ## Procedure
 

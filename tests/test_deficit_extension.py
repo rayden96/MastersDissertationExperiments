@@ -4,8 +4,8 @@ Verify the preconditioned-deficit extension to InterferenceMeter.
     python tests/test_deficit_extension.py
 
 Checks:
-  1. Regression: the refactored SGD-yardstick D_t equals the ORIGINAL formula
-     lr*(<g,-u/lr> - ||g||^2) exactly, on random (g, u).
+  1. Regression: the SGD-yardstick D_t equals the canonical positive=hurt
+     formula <g,u> + lr*||g||^2 exactly, on random (g, u).
   2. Hook off (default): cum_deficit_precond stays 0 / count 0; logs carry NaN
      for D_t_precond -> original behaviour preserved.
   3. Hook on with an SGD ideal (u_ideal = -lr*g): D_t_precond == D_t exactly,
@@ -74,9 +74,10 @@ class _ToyProblem(InterferenceProblem):
         self._theta = self._theta + u
 
 
-def _original_D(lr, g, u):
-    eff = -u / lr
-    return lr * (torch.dot(g, eff).item() - torch.dot(g, g).item())
+def _expected_D(lr, g, u):
+    # Canonical deficit (positive = hurt): D_t = <g, u> - <g, u_ideal>,
+    # u_ideal = -lr*g  =>  <g, u> + lr*||g||^2.
+    return torch.dot(g, u).item() + lr * torch.dot(g, g).item()
 
 
 def test_regression_and_hook():
@@ -95,7 +96,7 @@ def test_regression_and_hook():
         prob.apply_update(u)
         meter.after_step(step, batch=None, applied_loss=0.0)
         log = meter.logs[-1]
-        ref_D = _original_D(lr, g, u)
+        ref_D = _expected_D(lr, g, u)
         max_diff = max(max_diff, abs(log["D_t"] - ref_D))
         # hook off -> precond is NaN and uncounted
         assert log["D_t_precond"] != log["D_t_precond"], "precond should be NaN when hook off"

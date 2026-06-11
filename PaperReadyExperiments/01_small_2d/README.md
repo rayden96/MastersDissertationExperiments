@@ -32,7 +32,7 @@ Mixture centres $\mu_k$ are placed on a circle of radius $R$ around the origin. 
 - The mean pairwise cosine between per-component gradients should start near $0$ or negative and rise.
 - $I_{\text{between},K}$ behaviour depends on $K$ and LR: large LR → trajectory zigzags → low $I_{\text{between}}$. Small LR → straight descent → high $I_{\text{between}}$.
 - Useful descent fraction of the batch gradient should be high near the centroid (where batch grad ≈ full-batch grad) and lower far away.
-- The per-step deficit $D_t$ should track the cancellation: when interference is high, the batch direction is far from full-batch direction, so $D_t$ is more negative.
+- The per-step deficit $D_t$ should track the cancellation: when interference is high, the batch direction is far from the full-batch direction, so $D_t$ is larger (the deficit is non-negative; larger = more first-order descent lost to interference).
 
 ## Outputs
 

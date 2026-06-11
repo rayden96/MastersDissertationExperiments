@@ -87,6 +87,7 @@ def summarize_run(
         "inter_frac_neg_mean":        safe_mean(logs, "inter_frac_neg"),
         "inter_mean_cos_mean":        safe_mean(logs, "inter_mean_cos"),
         "inter_mean_grad_norm_mean":  safe_mean(logs, "inter_mean_grad_norm"),
+        "inter_std_grad_norm_mean":   safe_mean(logs, "inter_std_grad_norm"),
         "inter_max_min_ratio_mean":   safe_mean(logs, "inter_max_min_ratio"),
         "inter_useful_mass_mean":     safe_mean(logs, "inter_useful_mass"),
         "inter_wasted_mass_mean":     safe_mean(logs, "inter_wasted_mass"),
@@ -105,13 +106,26 @@ def summarize_run(
         summary[f"between_K{K}_mean_u_norm_mean"] = safe_mean(
             logs, f"between_K{K}_mean_u_norm"
         )
+        summary[f"between_K{K}_std_u_norm_mean"] = safe_mean(
+            logs, f"between_K{K}_std_u_norm"
+        )
+        # signed net descent walked vs perpendicular path over the window
+        summary[f"between_K{K}_useful_path_mean"] = safe_mean(logs, f"between_K{K}_useful_path")
+        summary[f"between_K{K}_wasted_path_mean"] = safe_mean(logs, f"between_K{K}_wasted_path")
+        # per-K correlation with the deficit (was previously emitted for K=32 only)
+        summary[f"corr_I_between_K{K}_vs_Dt"] = correlate(logs, f"I_between_K{K}", "D_t")
+        summary[f"corr_between_K{K}_mean_cos_vs_Dt"] = correlate(
+            logs, f"between_K{K}_mean_cos", "D_t"
+        )
 
-    # Standard correlations: do geometric summaries predict per-step deficit?
+    # Inter-batch correlations: do the geometric summaries predict the per-step
+    # deficit? (Between-batch corr_*_vs_Dt are emitted per-K in the loop above,
+    # so all of K in {4,32,128} are covered, not only K=32. With the positive=hurt
+    # D_t convention, "less interference" metrics e.g. I_inter correlate NEGATIVELY
+    # with D_t.)
     summary["corr_I_inter_vs_Dt"]            = correlate(logs, "I_inter", "D_t")
     summary["corr_inter_mean_cos_vs_Dt"]     = correlate(logs, "inter_mean_cos", "D_t")
     summary["corr_inter_max_min_ratio_vs_Dt"] = correlate(logs, "inter_max_min_ratio", "D_t")
-    summary["corr_I_between_K32_vs_Dt"]      = correlate(logs, "I_between_K32", "D_t")
-    summary["corr_between_K32_mean_cos_vs_Dt"] = correlate(logs, "between_K32_mean_cos", "D_t")
 
     # Loss-drop calibration if provided
     if calibration_logs and len(calibration_logs) >= 2:
