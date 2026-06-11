@@ -1,5 +1,8 @@
 # Results are gitignored — regenerable from runners, and can be large/Drive-mounted.
 results/
+# Generated cross-summary aggregator outputs (canonical copies persist to Drive).
+PaperReadyExperiments/*/*_cross_summary/master_table.json
+PaperReadyExperiments/*/*_cross_summary/mechanism_contrast.json
 # Exception: PreDiscovery/FocusedWork keeps its results in-repo (small, hand-curated).
 !PreDiscovery/FocusedWork/results/
 !PreDiscovery/FocusedWork/results/**

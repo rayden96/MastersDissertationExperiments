@@ -33,6 +33,7 @@ for p in (str(_REPO), str(_PRE)):
         sys.path.insert(0, p)
 
 from common.storage import read_json, write_json_atomic, get_results_root  # noqa: E402
+from _summary_utils import prefer_new_layout, speedup_for_run  # noqa: E402
 
 # Axes now persist under get_results_root() (Drive on Colab). Scan there; fall
 # back to the repo-local axis folders for any results produced before this change.
@@ -64,10 +65,11 @@ def _run_rank(run_dir: Path) -> tuple:
     return (n_cells, mtime)
 
 
-def _latest_summaries(axis_dir: Path) -> List[Dict[str, Any]]:
-    """One summary per parent dir, choosing the most-complete/most-recent run.
-    (When multiple run_<id> folders exist from re-runs, the best one wins; the
-    rest are ignored — so duplicate runs never need manual deletion.)"""
+def _latest_runs(axis_dir: Path) -> List[tuple]:
+    """(run_dir, summary) per parent dir, choosing the most-complete/most-recent
+    run. (When multiple run_<id> folders exist under one parent from re-runs, the
+    best one wins; the rest are ignored — so duplicate runs never need manual
+    deletion.)"""
     out = []
     if not axis_dir.exists():
         return out
@@ -78,7 +80,7 @@ def _latest_summaries(axis_dir: Path) -> List[Dict[str, Any]]:
             by_parent[parent] = s.parent
     for run_dir in by_parent.values():
         try:
-            out.append(read_json(run_dir / "summary.json"))
+            out.append((run_dir, read_json(run_dir / "summary.json")))
         except Exception:
             pass
     return out
@@ -97,28 +99,31 @@ def _baseline(cells, base):
     return None
 
 
-def _axis_summaries(folder: str):
-    """Summaries for an axis from BOTH the persistent (Drive) location and the
-    repo-local one. The harness persists each run under a dir named by the full
-    axis_name, e.g. '20_05_combine_iris' (= '20_' + folder + '_<ds>'), so we glob
-    by that prefix rather than the bare AXES-key folder name."""
+def _axis_runs(folder: str):
+    """(run_dir, summary, priority) for an axis from the NEW prefixed layout
+    ('20_<folder>*', e.g. '20_05_combine_iris', priority 1) and the LEGACY bare
+    layout ('<folder>', priority 0). prefer_new_layout() drops stale bare
+    duplicates per (folder, base, dataset)."""
     prefix = f"20_{folder}"          # e.g. 05_combine -> 20_05_combine
     out = []
-    for base in (_RESULTS_BASE, _AXIS_ROOT):
-        if not base.exists():
+    for base_dir in (_RESULTS_BASE, _AXIS_ROOT):
+        if not base_dir.exists():
             continue
-        for d in base.glob(f"{prefix}*"):   # 20_05_combine, 20_05_combine_iris, ...
-            out += _latest_summaries(d)
-        # also the bare folder (older layout / repo-local results dir)
-        out += _latest_summaries(base / folder)
+        for d in base_dir.glob(f"{prefix}*"):   # 20_05_combine, 20_05_combine_iris, ...
+            out += [(rd, s, 1) for rd, s in _latest_runs(d)]
+        out += [(rd, s, 0) for rd, s in _latest_runs(base_dir / folder)]
     return out
 
 
 def build():
-    rows = []
+    # collect (key, priority, row); prefer_new_layout() then drops stale legacy
+    # (bare-folder) duplicates per (folder, base, dataset).
+    collected = []
     for folder, label in AXES.items():
-        for summary in _axis_summaries(folder):
+        for run_dir, summary, prio in _axis_runs(folder):
             cells = summary.get("cells", [])
+            dataset = summary.get("dataset")
+            sp = speedup_for_run(run_dir)   # {(base, cell): speed record} from curves
             for base in sorted({e["base"] for e in cells}):
                 bcells = [e for e in cells if e["base"] == base]
                 bl = _baseline(bcells, base)
@@ -135,20 +140,25 @@ def build():
                 base_acc = _g(blm, "final_test_acc")
                 base_Iinter = _g(blm, "I_inter_mean")
                 best_Iinter = _g(bm, "I_inter_mean")
-                rows.append({
+                best_acc = _g(bm, "final_test_acc")
+                spd = sp.get((base, best["cell"]), {})
+                collected.append(((folder, base, dataset), prio, {
                     "axis": label, "folder": folder, "base": base,
-                    "dataset": summary.get("dataset"),
+                    "dataset": dataset,
                     "best_cell": best["cell"],
-                    "best_acc": _g(bm, "final_test_acc"),
+                    "best_acc": best_acc,
                     "baseline_acc": base_acc,
-                    "delta_acc": (round(_g(bm, "final_test_acc") - base_acc, 4)
-                                  if base_acc is not None and _g(bm, "final_test_acc") is not None else None),
+                    "delta_acc": (round(best_acc - base_acc, 4)
+                                  if base_acc is not None and best_acc is not None else None),
+                    "epoch_speedup": spd.get("epoch_speedup"),
+                    "wall_speedup": spd.get("wall_speedup"),
                     "I_inter": best_Iinter,
                     "delta_I_inter": (round(best_Iinter - base_Iinter, 4)
                                       if best_Iinter is not None and base_Iinter is not None else None),
                     "inter_mean_cos": _g(bm, "inter_mean_cos_mean"),
                     "I_between_K32": _g(bm, "I_between_K32_mean"),
-                })
+                }))
+    rows = prefer_new_layout(collected)
     return {"rows": rows, "n": len(rows)}
 
 
@@ -166,7 +176,16 @@ def contrast():
     if bograd_mt.exists():
         try:
             bg = read_json(bograd_mt)
-            ibs = [r["I_between_K32"] for r in bg.get("rows", []) if r.get("I_between_K32") is not None]
+            rows = bg.get("rows", [])
+            # Symmetric Δ-vs-Δ: COSGD raises I_inter; BoGrad raises I_between.
+            # Use the baseline->best delta now stored in the BoGrad master table
+            # (older tables lack it -> falls back to None; the observed I_between
+            # *level* is still reported below for context).
+            dib = [r["delta_I_between_K32"] for r in rows
+                   if r.get("delta_I_between_K32") is not None]
+            if dib:
+                out["bograd_moves_I_between"] = round(sum(dib) / len(dib), 4)
+            ibs = [r["I_between_K32"] for r in rows if r.get("I_between_K32") is not None]
             if ibs:
                 out["bograd_I_between_observed"] = round(sum(ibs) / len(ibs), 4)
         except Exception:
@@ -187,21 +206,24 @@ def main():
     print(f"\n(also persisted to {out_dir})", flush=True)
 
     print(f"\n=== COSGD master table ({master['n']} rows) ===")
-    hdr = f"{'axis':<22}{'base':<9}{'best cell':<26}{'acc':>8}{'d-acc':>8}{'I_inter':>9}{'dI_int':>8}{'cos':>8}"
+    hdr = (f"{'axis':<22}{'base':<9}{'best cell':<26}{'acc':>8}{'d-acc':>8}"
+           f"{'spd':>7}{'I_inter':>9}{'dI_int':>8}{'cos':>8}")
     print(hdr); print("-" * len(hdr))
     for r in master["rows"]:
-        da = r["delta_acc"]; di = r["delta_I_inter"]; cos = r["inter_mean_cos"]
+        da = r["delta_acc"]; di = r["delta_I_inter"]; cos = r["inter_mean_cos"]; sp = r.get("epoch_speedup")
         print(f"{r['axis']:<22}{r['base']:<9}{r['best_cell']:<26}"
               f"{(r['best_acc'] if r['best_acc'] is not None else float('nan')):>8.3f}"
               f"{(f'{da:+.3f}' if da is not None else '   n/a'):>8}"
+              f"{(f'{sp:.2f}x' if sp is not None else '  n/a'):>7}"
               f"{(r['I_inter'] if r['I_inter'] is not None else float('nan')):>9.3f}"
               f"{(f'{di:+.3f}' if di is not None else '   n/a'):>8}"
               f"{(cos if cos is not None else float('nan')):>8.3f}")
 
     print("\n=== COSGD <-> BoGrad mechanism contrast ===")
-    print(f"  COSGD mean delta-I_inter (raises within-batch alignment): {ctr.get('cosgd_moves_I_inter')}")
-    print(f"  BoGrad observed I_between_K32 (its between-batch axis):    {ctr.get('bograd_I_between_observed')}")
-    print("  Expectation: COSGD raises I_inter (inter-batch) while BoGrad acts on I_between.")
+    print(f"  COSGD mean delta-I_inter   (raises within-batch alignment):  {ctr.get('cosgd_moves_I_inter')}")
+    print(f"  BoGrad mean delta-I_between (raises between-batch alignment): {ctr.get('bograd_moves_I_between')}")
+    print(f"  BoGrad observed I_between_K32 level (context):               {ctr.get('bograd_I_between_observed')}")
+    print("  Expectation: COSGD raises I_inter (inter-batch) while BoGrad raises I_between.")
     print(f"\nwrote {_HERE/'master_table.json'} and {_HERE/'mechanism_contrast.json'}")
 
 
