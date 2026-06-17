@@ -151,6 +151,13 @@ class Trainer:
         self.best_metric = -math.inf
         self._t_offset = 0.0
         self._cfg_hash = storage.config_hash(config.to_dict())
+        # cost measurement (FOGO-style results): param count + clean training-step
+        # time + peak training memory, measured around the train op only so the
+        # meter's diagnostics and the eval passes do not contaminate them.
+        self.n_params = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        self._train_step_time_sum = 0.0
+        self._measured_steps = 0
+        self._peak_train_bytes = 0
 
     # ---- data ---------------------------------------------------------
     @staticmethod
@@ -256,6 +263,9 @@ class Trainer:
 
         logger = storage.JsonlLogger(self.run_dir / "metrics.jsonl")
         self._t0 = time.time()
+        cuda = self.device.type == "cuda"
+        if cuda:
+            torch.cuda.reset_peak_memory_stats()
         status = "completed"
         epoch_test_acc: List[float] = []
         epoch_train_loss: List[float] = []
@@ -271,12 +281,17 @@ class Trainer:
                     x = x.to(self.device, non_blocking=True)
                     y = y.to(self.device, non_blocking=True)
 
+                    # Time + peak-memory the training op in isolation (forward /
+                    # backward / optimizer.step), excluding the meter's heavy
+                    # after_step diagnostics and the eval passes, so the recorded
+                    # cost reflects the method itself.
+                    if cuda:
+                        torch.cuda.reset_peak_memory_stats()
+                    _t_step = time.perf_counter()
                     if is_per_class:
                         if self.meter is not None:
                             self.meter.before_step()
                         loss_val = float(self.optimizer.step(x, y, torch.unique(y)))
-                        if self.meter is not None:
-                            self.meter.after_step(self.global_step, (x, y), loss_val)
                     else:
                         self.optimizer.zero_grad(set_to_none=True)
                         out = self.model(x)
@@ -286,8 +301,15 @@ class Trainer:
                             self.meter.before_step()
                         self.optimizer.step()
                         loss_val = float(loss.item())
-                        if self.meter is not None:
-                            self.meter.after_step(self.global_step, (x, y), loss_val)
+                    if cuda:
+                        torch.cuda.synchronize()
+                        self._peak_train_bytes = max(
+                            self._peak_train_bytes, torch.cuda.max_memory_allocated())
+                    self._train_step_time_sum += time.perf_counter() - _t_step
+                    self._measured_steps += 1
+
+                    if self.meter is not None:
+                        self.meter.after_step(self.global_step, (x, y), loss_val)
 
                     loss_sum += loss_val
                     n_batches += 1
@@ -348,6 +370,10 @@ class Trainer:
             "final_train_loss": epoch_train_loss[-1] if epoch_train_loss else float("nan"),
             "total_wall_time_s": total_wall,
             "mean_step_wall_time_s": total_wall / max(self.global_step, 1),
+            "n_params": int(self.n_params),
+            "peak_mem_mb": (self._peak_train_bytes / 1e6) if self._peak_train_bytes else float("nan"),
+            "mean_train_step_s": (self._train_step_time_sum / self._measured_steps)
+                                 if self._measured_steps else float("nan"),
         }
 
         results: Dict[str, Any] = {

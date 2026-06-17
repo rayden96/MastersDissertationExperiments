@@ -18,11 +18,14 @@ Computes, on a logged step:
       DISSERTATION_OUTLINE.md D.4)
     - useful path frac     against the window-start reference direction
 
-  Per-step first-order loss-decrease deficit (>= 0; larger = more interference):
+  Per-step first-order loss-decrease deficit (positive = hurt):
     D_t = <g_tilde, u_t> + lr * ||g_tilde||^2
     i.e. the first-order reference-loss change of the applied update u_t minus
-    that of the ideal SGD step u_ideal = -lr*g_tilde. 0 when u_t is as
-    descent-effective as the ideal; grows as interference steals descent.
+    that of the ideal SGD step u_ideal = -lr*g_tilde. 0 when u_t matches the
+    ideal; positive when the step recovers less first-order decrease; can be
+    negative on a step whose sampled gradient over-achieves the reference.
+    E[D_t] = 0 under unbiased iid sampling (E<g~,g> = ||g~||^2), so a
+    persistently POSITIVE mean is the structured-interference signature.
 
   Sparse measured-loss calibration:
     reference loss recorded at each ref refresh.
@@ -150,12 +153,13 @@ class InterferenceMeter:
 
         # Per-step deficit using the *current* (potentially stale) ref_grad.
         #
-        # D_t = <g_tilde, u_t> - <g_tilde, u_ideal>   (>= 0; larger = worse):
-        # the first-order reference-loss decrease the applied update u_t FAILED
+        # D_t = <g_tilde, u_t> - <g_tilde, u_ideal>   (positive = hurt):
+        # the first-order reference-loss decrease the applied update u_t failed
         # to achieve relative to the ideal full-batch update u_ideal. <g_tilde,u>
-        # is the first-order change in reference loss under update u; the ideal
-        # step is the most descent-effective, so the actual step's change is >=
-        # the ideal's and the (non-negative) gap is the interference deficit.
+        # is the first-order change in reference loss under update u. D_t is not
+        # pointwise non-negative (a sampled step can over-achieve the reference);
+        # its expectation is 0 under unbiased iid sampling, so a persistently
+        # positive mean is the structured-interference signature.
         #
         # SGD yardstick: u_ideal = -lr*g_tilde  =>  D_t = g_dot_u + lr*||g~||^2.
         # (Sign convention: positive = hurt; matches FocusedWork/03 prose.)

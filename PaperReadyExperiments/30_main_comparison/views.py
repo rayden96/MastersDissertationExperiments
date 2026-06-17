@@ -44,6 +44,9 @@ def _resolve_campaign(arg: Optional[str]) -> Path:
     if arg:
         p = Path(arg)
         return p if p.is_absolute() else (_HERE / arg)
+    main = root / "main"
+    if main.exists():
+        return main
     runs = sorted(root.glob("run_*"))
     if not runs:
         raise SystemExit(f"No bakeoff campaign under {root} (run.py first)")
@@ -51,13 +54,16 @@ def _resolve_campaign(arg: Optional[str]) -> Path:
 
 
 def _load_rows(campaign: Path) -> List[Dict[str, Any]]:
-    allp = campaign / "all_rows.json"
-    if allp.exists():
-        return read_json(allp)
+    # Aggregate the per-cell files first: they never collide across concurrent
+    # per-dataset sessions, whereas a campaign-level all_rows.json is overwritten
+    # per session. Fall back to all_rows.json only if no cell files exist.
     rows: List[Dict[str, Any]] = []
-    for cell in campaign.rglob("cell_*.json"):
+    for cell in sorted(campaign.rglob("cell_*.json")):
         rows.extend(read_json(cell).get("rows", []))
-    return rows
+    if rows:
+        return rows
+    allp = campaign / "all_rows.json"
+    return read_json(allp) if allp.exists() else []
 
 
 def _group(rows):
@@ -281,10 +287,143 @@ def view_speedup(campaign, grouped, target_frac=1.0):
     print(f"  wrote {campaign/'30_00_speedup.md'}")
 
 
+# ---- 30.10 FOGO-style master results table --------------------------------
+def _fmt(m, s, nd=3):
+    if m is None or m != m:
+        return "—"
+    return f"{m:.{nd}f}$\\pm${s:.{nd}f}" if (s == s and s > 0) else f"{m:.{nd}f}"
+
+
+def _acc_at(rs, frac):
+    vals = []
+    for r in rs:
+        c = r.get("epoch_test_acc", [])
+        if c:
+            idx = 0 if frac <= 0 else max(0, int(round(frac * len(c))) - 1)
+            vals.append(c[idx])
+    return _mean_std(vals)
+
+
+def _latex_cell(c: str) -> str:
+    """Escape one table cell for LaTeX. _fmt already emits $\\pm$; here we fix
+    percent signs and turn a trailing speed-up 'x' into $\\times$."""
+    c = c.replace("%", r"\%").replace("→", r"$\to$")
+    body = c[:-1].replace(".", "").replace("-", "")
+    if c.endswith("x") and body.isdigit():
+        c = c[:-1] + r"$\times$"
+    return c
+
+
+def _write_fogo_latex(campaign, dataset, header, rows):
+    safe_ds = dataset.replace("_", r"\_")
+    spec = "l" + "r" * (len(header) - 1)
+    lines = [r"\begin{table}[htbp]", r"  \centering", r"  \small",
+             r"  \begin{tabular}{" + spec + "}", r"  \hline",
+             "  " + " & ".join(_latex_cell(h) for h in header) + r" \\",
+             r"  \hline"]
+    for row in rows:
+        cells = [(c.replace("_", r"\_") if i == 0 else _latex_cell(c)) for i, c in enumerate(row)]
+        lines.append("  " + " & ".join(cells) + r" \\")
+    lines += [r"  \hline", r"  \end{tabular}",
+              rf"  \caption{{Main comparison on {safe_ds}: per-method cost and "
+              r"convergence (mean $\pm$ std across seeds). PeakMem is the clean "
+              r"training peak GPU; Buf is the persistent BOGrad buffer; step is the "
+              r"per-step training time; ep$\to$base is epochs to the baseline's "
+              r"final accuracy; speed-up is baseline/method epochs.}",
+              rf"  \label{{tab:experiments:fogo_{dataset}}}", r"\end{table}"]
+    (campaign / f"30_10_fogo_table_{dataset}.tex").write_text("\n".join(lines), encoding="utf-8")
+
+
+def view_fogo_table(campaign, grouped):
+    """30.10 — the headline FOGO-style table. Per (dataset x base x method),
+    mean +/- std across seeds of: param count, clean peak training memory,
+    persistent buffer memory, clean per-step time, total wall-clock, early and
+    final accuracy, epochs-to-baseline, and convergence speed-up. Markdown + JSON
+    + a drop-in LaTeX table per dataset."""
+    header = ["base+method", "Params(M)", "PeakMem(MB)", "Buf(MB)", "step(ms)",
+              "Time(min)", "acc@1", "acc@50%", "best acc", "final acc", "ep→base", "speed-up"]
+    out_md = ["# 30.10 FOGO-style results table\n",
+              "Mean$\\pm$std across seeds. PeakMem = clean training peak GPU; "
+              "Buf = persistent BOGrad buffer (K x params x 4B); step = clean "
+              "per-step training time; Time = total wall-clock; ep->base = epochs "
+              "to reach the base's baseline final accuracy; speed-up = "
+              "baseline_epochs / method_epochs.\n"]
+    out_json: Dict[str, Any] = {}
+
+    for dataset, cells in sorted(grouped.items()):
+        bases = sorted({b for b, _ in cells})
+        out_md.append(f"\n## {dataset}\n")
+        out_md.append("| " + " | ".join(header) + " |")
+        out_md.append("|" + "---|" * len(header))
+        latex_rows: List[List[str]] = []
+        for base in bases:
+            base_rows = cells.get((base, "baseline"), [])
+            base_curves = [r.get("epoch_test_acc", []) for r in base_rows if r.get("epoch_test_acc")]
+            base_final = float(np.mean([c[-1] for c in base_curves])) if base_curves else float("nan")
+            b_ep = (float(np.mean([_epochs_to(c, base_final) or len(c) + 1 for c in base_curves]))
+                    if base_curves else float("nan"))
+            for method in METHOD_ORDER:
+                rs = cells.get((base, method), [])
+                if not rs:
+                    continue
+                pm = _mean_std([r.get("n_params") for r in rs])
+                peak = _mean_std([r.get("peak_mem_mb") for r in rs])
+                step = _mean_std([(r.get("mean_train_step_s") or r.get("mean_step_wall_time_s"))
+                                  for r in rs])
+                tmin = _mean_std([(r.get("total_wall_time_s") or float("nan")) / 60.0 for r in rs])
+                best = _mean_std([r.get("best_test_acc") for r in rs])
+                final = _mean_std([r.get("final_test_acc") for r in rs])
+                a1 = _acc_at(rs, 0.0)
+                a50 = _acc_at(rs, 0.5)
+                m_eps = [(_epochs_to(c, base_final) or len(c) + 1)
+                         for c in (r.get("epoch_test_acc", []) for r in rs)
+                         if c and base_final == base_final]
+                m_ep = float(np.mean(m_eps)) if m_eps else float("nan")
+                speed = (b_ep / m_ep) if (m_ep and m_ep == m_ep and b_ep == b_ep and m_ep > 0) else float("nan")
+                buf = 0.0
+                if method == "bograd":
+                    K = (rs[0].get("hp") or {}).get("K")
+                    if K and pm[0] == pm[0]:
+                        buf = K * pm[0] * 4 / 1e6
+                params_M = pm[0] / 1e6 if pm[0] == pm[0] else float("nan")
+                step_ms = (step[0] * 1000, step[1] * 1000) if step[0] == step[0] else (float("nan"), 0.0)
+                row = [
+                    f"{base}+{method}",
+                    f"{params_M:.2f}" if params_M == params_M else "—",
+                    _fmt(peak[0], peak[1], 1),
+                    f"{buf:.1f}" if buf else "0",
+                    _fmt(step_ms[0], step_ms[1], 2),
+                    _fmt(tmin[0], tmin[1], 1),
+                    _fmt(a1[0], a1[1]),
+                    _fmt(a50[0], a50[1]),
+                    _fmt(best[0], best[1]),
+                    _fmt(final[0], final[1]),
+                    f"{m_ep:.1f}" if m_ep == m_ep else "—",
+                    f"{speed:.2f}x" if speed == speed else "—",
+                ]
+                out_md.append("| " + " | ".join(row) + " |")
+                latex_rows.append(row)
+                spe = _mean_std([(r.get("total_steps") or 0) / (r.get("total_epochs") or 1)
+                                 for r in rs])[0]
+                steps_to_base = (m_ep * spe) if (m_ep == m_ep and spe == spe) else float("nan")
+                out_json[f"{dataset}/{base}/{method}"] = {
+                    "params_M": params_M, "peak_mem_mb": peak[0], "buf_mb": buf,
+                    "step_ms": step_ms[0], "time_min": tmin[0], "acc_ep1": a1[0],
+                    "acc_50pct": a50[0], "best_acc": best[0], "final_acc": final[0],
+                    "epochs_to_base": m_ep, "steps_per_epoch": spe,
+                    "steps_to_base": steps_to_base,
+                    "epoch_speedup": speed, "n_seeds": final[2],
+                }
+        _write_fogo_latex(campaign, dataset, header, latex_rows)
+    (campaign / "30_10_fogo_table.md").write_text("\n".join(out_md), encoding="utf-8")
+    write_json_atomic(campaign / "30_10_fogo_table.json", out_json)
+    print(f"  wrote {campaign/'30_10_fogo_table.md'} (+ per-dataset .tex)")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--campaign", default=None)
-    ap.add_argument("--only", nargs="+", default=["00", "01", "02", "03", "09"])
+    ap.add_argument("--only", nargs="+", default=["00", "01", "02", "03", "09", "10"])
     ap.add_argument("--target-frac", type=float, default=1.0,
                     help="speed-up target as fraction of baseline final acc (e.g. 0.95)")
     args = ap.parse_args()
@@ -301,6 +440,7 @@ def main():
     if "02" in args.only: view_budget_tables(campaign, grouped)
     if "03" in args.only: view_final_bars(campaign, grouped)
     if "09" in args.only: view_pareto(campaign, grouped)
+    if "10" in args.only: view_fogo_table(campaign, grouped)
 
 
 if __name__ == "__main__":

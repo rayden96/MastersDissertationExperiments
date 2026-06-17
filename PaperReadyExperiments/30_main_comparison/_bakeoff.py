@@ -210,6 +210,7 @@ def run_bakeoff(
     methods: Sequence[str] = METHODS,
     seeds: Sequence[int] = (2026, 2027, 2028, 2029, 2030),
     out_root: Optional[Path] = None,
+    campaign: Optional[str] = None,
     epochs: Optional[int] = None,
     tune: bool = True,
     measure: bool = True,
@@ -223,11 +224,14 @@ def run_bakeoff(
         torch.set_float32_matmul_precision("high")
 
     out_root = out_root or (_HERE / "_core" / "results")
-    run_id = storage.new_run_id()
-    campaign = Path(out_root) / f"run_{run_id}"
-    campaign.mkdir(parents=True, exist_ok=True)
+    # A fixed campaign name lets per-dataset runs in CONCURRENT Colab sessions
+    # accumulate into ONE record set: each dataset writes its own subfolder, so
+    # there is no cross-session collision. Default "main"; pass None for a
+    # timestamped one-off.
+    campaign_dir = Path(out_root) / (campaign or f"run_{storage.new_run_id()}")
+    campaign_dir.mkdir(parents=True, exist_ok=True)
     print(f"[bakeoff] {len(datasets)}ds x {len(bases)}opt x {len(methods)}method x {len(seeds)}seed "
-          f"= {len(datasets)*len(bases)*len(methods)*len(seeds)} runs -> {campaign}")
+          f"= {len(datasets)*len(bases)*len(methods)*len(seeds)} runs -> {campaign_dir}")
 
     all_rows: List[Dict[str, Any]] = []
     for dataset in datasets:
@@ -236,7 +240,7 @@ def run_bakeoff(
         bs = bundle.meta["batch_size"]
         ref_ds = balanced_reference_subset(bundle.train, num_classes=bundle.meta["num_classes"],
                                            n_per_class=ref_n_per_class, seed=2026)
-        ds_dir = campaign / dataset
+        ds_dir = campaign_dir / dataset
         for base in bases:
             for method in methods:
                 t0 = time.time()
@@ -248,9 +252,12 @@ def run_bakeoff(
                 all_rows.extend(rows)
                 print(f"  [{dataset}/{base}+{method}] {len(rows)} seeds in {time.time()-t0:.0f}s", flush=True)
 
-    storage.write_json_atomic(campaign / "all_rows.json", all_rows)
-    print(f"\n[bakeoff] done -> {campaign}")
-    return campaign
+    # Per-session convenience snapshot. NOT authoritative across concurrent
+    # sessions (each would overwrite it); views.py aggregates the per-cell
+    # cell_*.json files instead, which never collide.
+    storage.write_json_atomic(campaign_dir / "all_rows.json", all_rows)
+    print(f"\n[bakeoff] done -> {campaign_dir}")
+    return campaign_dir
 
 
 def _row(dataset, base, method, seed, res) -> Dict[str, Any]:
@@ -260,9 +267,18 @@ def _row(dataset, base, method, seed, res) -> Dict[str, Any]:
            "final_test_acc": sc.get("final_test_acc"),
            "best_test_acc": sc.get("best_test_acc"),
            "final_val_acc": sc.get("final_val_acc"),
+           "final_train_loss": sc.get("final_train_loss"),
+           # FOGO-style cost columns (memory / timing / size); most table fields
+           # are derived post-hoc in views.py from these + the accuracy curves.
            "mean_step_wall_time_s": sc.get("mean_step_wall_time_s"),
+           "mean_train_step_s": sc.get("mean_train_step_s"),
            "total_wall_time_s": sc.get("total_wall_time_s"),
+           "peak_mem_mb": sc.get("peak_mem_mb"),
+           "n_params": sc.get("n_params"),
+           "total_steps": res.get("total_steps"),
+           "total_epochs": res.get("total_epochs"),
            "epoch_test_acc": res.get("history", {}).get("epoch_test_acc", []),
+           "epoch_train_loss": res.get("history", {}).get("epoch_train_loss", []),
            "hp": res.get("config", {}).get("hp", {})}
     interf = res.get("interference", {})
     for k in ("I_inter_mean", "inter_mean_cos_mean", "I_between_K32_mean",

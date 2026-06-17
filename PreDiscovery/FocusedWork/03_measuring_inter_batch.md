@@ -66,9 +66,9 @@ For SGD with $u_t = -\eta g_t$:
 - *Actual first-order*: $\Delta L_t^{\text{first}} \approx -\eta\, \langle\tilde g_t,\, g_t\rangle$.
 - *Per-step first-order deficit*:
 
-$$D_t \;=\; \Delta L_t^{\text{first}} - \Delta L_t^{\text{ideal}} \;=\; -\eta\,\langle\tilde g_t,\, g_t\rangle + \eta\,\lVert\tilde g_t\rVert^2 \;=\; \eta\bigl(\lVert\tilde g_t\rVert^2 - \langle\tilde g_t,\, g_t\rangle\bigr) \;\ge\; 0.$$
+$$D_t \;=\; \Delta L_t^{\text{first}} - \Delta L_t^{\text{ideal}} \;=\; -\eta\,\langle\tilde g_t,\, g_t\rangle + \eta\,\lVert\tilde g_t\rVert^2 \;=\; \eta\bigl(\lVert\tilde g_t\rVert^2 - \langle\tilde g_t,\, g_t\rangle\bigr).$$
 
-A positive $D_t$ means the SGD step's first-order loss-decrease is less than the full-batch step's would have been — the per-step training-hurt attribution (the deficit is **non-negative**, and **larger = more hurt**). If $g_t = \tilde g_t$ exactly, $D_t = 0$. If $g_t$ is anti-parallel to $\tilde g_t$, $D_t = 2\eta\lVert\tilde g_t\rVert^2$. (This is the sign convention implemented in `interference/meter.py`: `D_t = <g_tilde, u_t> + lr*||g_tilde||^2`, recovering $u_t$ from the applied delta.)
+A positive $D_t$ means the SGD step's first-order loss-decrease is less than the full-batch step's would have been — the per-step training-hurt attribution (**positive = hurt**). If $g_t = \tilde g_t$ exactly, $D_t = 0$. If $g_t$ is anti-parallel to $\tilde g_t$, $D_t = 2\eta\lVert\tilde g_t\rVert^2$. $D_t$ can be negative on a step whose sampled gradient over-achieves the reference; under unbiased iid sampling $\mathbb{E}[D_t] = 0$, so a persistently **positive mean** is exactly the "beyond iid noise" signature the working definition demands. (Sign convention implemented in `interference/meter.py`: `D_t = <g_tilde, u_t> + lr*||g_tilde||^2`, recovering $u_t$ from the applied delta.)
 
 For SGD with momentum, replace $g_t$ with the velocity $v_t$ in the actual term: $\Delta L_t^{\text{first}} \approx -\eta\, \langle\tilde g_t,\, v_t\rangle$. The ideal can be defined either as one full-batch SGD step ($-\eta\lVert\tilde g_t\rVert^2$) or as one full-batch *momentum* step under a counterfactual full-batch velocity buffer; the SGD-step ideal is simpler and is what we use as the default.
 

@@ -60,7 +60,7 @@ The useful path fraction can stay high under a curving (but cooperative) traject
 
 Per step $i$, the first-order deficit (defined exactly as in §03):
 
-$$D_i \;=\; \eta\bigl(\langle\tilde g_i,\, g_i\rangle - \lVert\tilde g_i\rVert^2\bigr).$$
+$$D_i \;=\; \eta\bigl(\lVert\tilde g_i\rVert^2 - \langle\tilde g_i,\, g_i\rangle\bigr).$$ (positive = hurt, matching §03)
 
 This requires $\tilde g_i$ at every step. In practice, the reference is sampled every $N$ steps (shared with §03's protocol); $\tilde g_i$ at intermediate steps is approximated by the most recent reference.
 

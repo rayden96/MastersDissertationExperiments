@@ -41,6 +41,9 @@ def main():
     ap.add_argument("--methods", nargs="+",
                     default=["baseline", "cosgd", "bograd", "graddrop", "dropout"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028, 2029, 2030])
+    ap.add_argument("--campaign", default="main",
+                    help="shared record-set name; keep the same across CONCURRENT "
+                         "per-dataset sessions so they aggregate into one campaign")
     ap.add_argument("--epochs", type=int, default=None, help="override per-dataset default")
     ap.add_argument("--no-tune", action="store_true")
     ap.add_argument("--no-measure", action="store_true",
@@ -52,10 +55,12 @@ def main():
         args.datasets = ["cifar10"]; args.bases = ["sgd"]
         args.methods = ["baseline", "bograd"]; args.seeds = [2026]
         args.epochs = 1
+        args.campaign = "smoke"
 
     run_bakeoff(
         datasets=args.datasets, bases=args.bases, methods=args.methods,
-        seeds=args.seeds, epochs=(1 if args.smoke else args.epochs),
+        seeds=args.seeds, campaign=args.campaign,
+        epochs=(1 if args.smoke else args.epochs),
         tune=(not args.no_tune and not args.smoke),
         measure=(not args.no_measure),
     )
