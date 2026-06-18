@@ -236,7 +236,7 @@ def _sklearn_small_bundle(name: str, val_fraction: float, seed: int) -> DatasetB
 # Text — Yahoo! Answers (HuggingFace datasets), tokenised to fixed-len id seqs
 # ---------------------------------------------------------------------------
 def _yahoo_bundle(val_fraction: float, seed: int,
-                  vocab_size: int = 30000, seq_len: int = 100,
+                  vocab_size: int = 30000, seq_len: int = 256,
                   train_subsample: int = 100_000, test_subsample: int = 20_000) -> DatasetBundle:
     """Yahoo! Answers Topics (10 classes). Whitespace tokeniser + frequency vocab,
     cached so we tokenise once. Train is subsampled for tractable Colab sweeps."""
@@ -283,18 +283,26 @@ def _yahoo_bundle(val_fraction: float, seed: int,
         tr_txt, tr_lab = texts_labels("train", train_subsample)
         te_txt, te_lab = texts_labels("test", test_subsample)
 
+        # word tokeniser: lowercase alphanumerics + apostrophes, punctuation
+        # dropped. Whitespace splitting left punctuation attached ("best?" != "best")
+        # and fragmented the vocab, costing accuracy.
+        import re
+        _word = re.compile(r"[a-z0-9']+")
+        def _tok(s):
+            return _word.findall(s)
+
         # frequency vocab from train; 0=pad, 1=unk
         from collections import Counter
         cnt = Counter()
         for t in tr_txt:
-            cnt.update(t.split())
+            cnt.update(_tok(t))
         itos = ["<pad>", "<unk>"] + [w for w, _ in cnt.most_common(vocab_size - 2)]
         stoi = {w: i for i, w in enumerate(itos)}
 
         def encode(txt):
             out = np.zeros((len(txt), seq_len), dtype=np.int64)
             for i, t in enumerate(txt):
-                toks = t.split()[:seq_len]
+                toks = _tok(t)[:seq_len]
                 for j, w in enumerate(toks):
                     out[i, j] = stoi.get(w, 1)
             return out
@@ -312,7 +320,7 @@ def _yahoo_bundle(val_fraction: float, seed: int,
     train_sub, val_sub = stratified_val_split(full_train, val_fraction, seed)
 
     meta = dict(num_classes=10, input_kind="text", model="text_cnn",
-                model_kwargs={"vocab_size": blob["vocab_size"], "embed_dim": 128,
+                model_kwargs={"vocab_size": blob["vocab_size"], "embed_dim": 200,
                               "pad_idx": 0},
                 vocab_size=blob["vocab_size"], seq_len=seq_len, pad_idx=0,
                 epochs=15, batch_size=128)
