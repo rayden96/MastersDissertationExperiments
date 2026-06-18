@@ -250,7 +250,25 @@ def _yahoo_bundle(val_fraction: float, seed: int,
     else:
         from datasets import load_dataset
 
-        ds = load_dataset("yahoo_answers_topics")
+        # The legacy bare name "yahoo_answers_topics" no longer resolves on recent
+        # huggingface_hub (it requires a namespace/name repo id). Try the
+        # community-datasets mirror first (served as parquet, no dataset script),
+        # then fall back to the bare name, with and without trust_remote_code.
+        ds, _errs = None, []
+        for _repo in ("community-datasets/yahoo_answers_topics", "yahoo_answers_topics"):
+            for _kw in ({}, {"trust_remote_code": True}):
+                try:
+                    ds = load_dataset(_repo, **_kw)
+                    break
+                except Exception as _e:  # noqa: BLE001
+                    _errs.append(f"{_repo} {_kw}: {type(_e).__name__}: {_e}")
+            if ds is not None:
+                break
+        if ds is None:
+            raise RuntimeError(
+                "Could not load Yahoo Answers Topics from any known id. Tried:\n  "
+                + "\n  ".join(_errs)
+            )
         rng = np.random.default_rng(seed)
 
         def texts_labels(split, k):
