@@ -1,0 +1,47 @@
+
+======================================================================
+[run_all] AXIS 01 -> 01_buffer_K  argv=['--dataset', 'cifar10', '--seeds', '2026', '2027', '2028', '--epochs', '10']
+======================================================================
+Files already downloaded and verified
+Files already downloaded and verified
+[10_01_buffer_K] dataset=cifar10 model=small_cifar_cnn nc=10 epochs=10 batch=128 device=cuda
+[10_01_buffer_K] bases=['sgd', 'signsgd', 'rmsprop', 'adam'] cells=['baseline_K0', 'K1', 'K2', 'K4', 'K8', 'K16', 'K32', 'K64', 'K128'] seeds=[2026, 2027, 2028] -> 108 runs
+  run sgd__baseline_K0__seed2026  hp={}
+    [sgd] e1/10 train_loss=1.8060 val_acc=0.3974 test_acc=0.4104
+    [sgd] e2/10 train_loss=1.4113 val_acc=0.5432 test_acc=0.5396
+    [sgd] e3/10 train_loss=1.1933 val_acc=0.6108 test_acc=0.6124
+    [sgd] e4/10 train_loss=1.0555 val_acc=0.6272 test_acc=0.6264
+    [sgd] e5/10 train_loss=0.9681 val_acc=0.6748 test_acc=0.6747
+    [sgd] e6/10 train_loss=0.8758 val_acc=0.6950 test_acc=0.6942
+    [sgd] e7/10 train_loss=0.8114 val_acc=0.6962 test_acc=0.7030
+    [sgd] e8/10 train_loss=0.7506 val_acc=0.7094 test_acc=0.7132
+    [sgd] e9/10 train_loss=0.7115 val_acc=0.7302 test_acc=0.7336
+    [sgd] e10/10 train_loss=0.6711 val_acc=0.7402 test_acc=0.7419
+  run sgd__baseline_K0__seed2027  hp={}
+    [sgd] e1/10 train_loss=1.8115 val_acc=0.4046 test_acc=0.4085
+    [sgd] e2/10 train_loss=1.4240 val_acc=0.5522 test_acc=0.5615
+    [sgd] e3/10 train_loss=1.1896 val_acc=0.6072 test_acc=0.6099
+    [sgd] e4/10 train_loss=1.0540 val_acc=0.6418 test_acc=0.6429
+    [sgd] e5/10 train_loss=0.9572 val_acc=0.6754 test_acc=0.6755
+    [sgd] e6/10 train_loss=0.8906 val_acc=0.6740 test_acc=0.6758
+    [sgd] e7/10 train_loss=0.8249 val_acc=0.7048 test_acc=0.7046
+    [sgd] e8/10 train_loss=0.7716 val_acc=0.7146 test_acc=0.7132
+    [sgd] e9/10 train_loss=0.7200 val_acc=0.7342 test_acc=0.7309
+    [sgd] e10/10 train_loss=0.6711 val_acc=0.7424 test_acc=0.7344
+  run sgd__baseline_K0__seed2028  hp={}
+    [sgd] e1/10 train_loss=1.8027 val_acc=0.4322 test_acc=0.4376
+    [sgd] e2/10 train_loss=1.4108 val_acc=0.5364 test_acc=0.5392
+    [sgd] e3/10 train_loss=1.2008 val_acc=0.6014 test_acc=0.6052
+    [sgd] e4/10 train_loss=1.0724 val_acc=0.6208 test_acc=0.6211
+    [sgd] e5/10 train_loss=0.9847 val_acc=0.6276 test_acc=0.6166
+    [sgd] e6/10 train_loss=0.8988 val_acc=0.6914 test_acc=0.6973
+    [sgd] e7/10 train_loss=0.8209 val_acc=0.7076 test_acc=0.7053
+    [sgd] e8/10 train_loss=0.7589 val_acc=0.7008 test_acc=0.7020
+    [sgd] e9/10 train_loss=0.7280 val_acc=0.7128 test_acc=0.7163
+    [sgd] e10/10 train_loss=0.6682 val_acc=0.7116 test_acc=0.7280
+  run sgd__K1__seed2026  hp={'K': 1, 'projection_mode': 'negative'}
+    [sgd+bograd] e1/10 train_loss=1.8315 val_acc=0.3652 test_acc=0.3679
+    [sgd+bograd] e2/10 train_loss=1.4357 val_acc=0.5106 test_acc=0.5080
+    [sgd+bograd] e3/10 train_loss=1.2183 val_acc=0.6076 test_acc=0.6103
+    [sgd+bograd] e4/10 train_loss=1.0834 val_acc=0.6166 test_acc=0.6140
+    [sgd+bograd] e5/10 train_loss=0.9841 val_acc=0.6700 test_acc=0.6774

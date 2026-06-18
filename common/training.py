@@ -168,8 +168,14 @@ class Trainer:
     def _eff_workers(self, ds) -> int:
         """Use 0 workers for in-memory tensor datasets / very small sets — DataLoader
         multiprocessing adds no benefit there and is a source of flaky worker
-        crashes (e.g. on tiny tabular sets like iris/wine)."""
+        crashes (e.g. on tiny tabular sets like iris/wine). Also 0 on Windows,
+        where DataLoader workers use the spawn start-method and hang when the
+        entry module was loaded dynamically (the ablation run_all importlib
+        loader). No-op on Linux/Colab where fork is used."""
+        import os
         from torch.utils.data import TensorDataset
+        if os.name == "nt":
+            return 0
         base = ds.dataset if isinstance(ds, Subset) else ds
         if isinstance(base, TensorDataset) or len(ds) < 2000:
             return 0
