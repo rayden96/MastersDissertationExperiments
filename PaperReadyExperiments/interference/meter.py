@@ -239,9 +239,14 @@ class InterferenceMeter:
                     c = torch.dot(grads[i], grads[j]).item() / (norms[i] * norms[j])
                     cos_list.append(c)
         if cos_list:
-            log["inter_n_pairs"] = len(cos_list)
-            log["inter_frac_neg"] = float(sum(1 for c in cos_list if c < 0) / len(cos_list))
-            log["inter_mean_cos"] = float(np.mean(cos_list))
+            arr = np.asarray(cos_list)
+            pos, neg = arr[arr > 0], arr[arr < 0]
+            log["inter_n_pairs"] = int(arr.size)
+            log["inter_frac_neg"] = float(neg.size / arr.size)        # conflicting share
+            log["inter_frac_pos"] = float(pos.size / arr.size)        # aligning share
+            log["inter_mean_cos"] = float(arr.mean())                 # signed, over all pairs
+            log["inter_mean_cos_pos"] = float(pos.mean()) if pos.size else float("nan")  # aligning pairs only
+            log["inter_mean_cos_neg"] = float(neg.mean()) if neg.size else float("nan")  # conflicting pairs only
 
         # (2b) magnitude stats
         log["inter_mean_grad_norm"] = float(np.mean(norms))
@@ -302,11 +307,14 @@ class InterferenceMeter:
                     c = torch.dot(window[i], window[j]).item() / (norms_w[i] * norms_w[j])
                     cos_list_w.append(c)
             if cos_list_w:
-                log[f"between_K{K}_n_pairs"] = len(cos_list_w)
-                log[f"between_K{K}_frac_neg"] = float(
-                    sum(1 for c in cos_list_w if c < 0) / len(cos_list_w)
-                )
-                log[f"between_K{K}_mean_cos"] = float(np.mean(cos_list_w))
+                arr_w = np.asarray(cos_list_w)
+                pos_w, neg_w = arr_w[arr_w > 0], arr_w[arr_w < 0]
+                log[f"between_K{K}_n_pairs"] = int(arr_w.size)
+                log[f"between_K{K}_frac_neg"] = float(neg_w.size / arr_w.size)
+                log[f"between_K{K}_frac_pos"] = float(pos_w.size / arr_w.size)
+                log[f"between_K{K}_mean_cos"] = float(arr_w.mean())
+                log[f"between_K{K}_mean_cos_pos"] = float(pos_w.mean()) if pos_w.size else float("nan")
+                log[f"between_K{K}_mean_cos_neg"] = float(neg_w.mean()) if neg_w.size else float("nan")
 
             # Magnitude stats over window.
             log[f"between_K{K}_mean_u_norm"] = float(np.mean(norms_w))
