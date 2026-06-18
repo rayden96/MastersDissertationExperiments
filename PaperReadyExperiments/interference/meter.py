@@ -13,9 +13,10 @@ Computes, on a logged step:
 
   §04 between-batch (within a rolling K-window of applied updates):
     - cancellation index   I_between_K = ||theta_t - theta_{t-K}|| / sum ||u_i||
-    - pairwise cosine stats within the window (pooled; a lag-resolved
-      cos(u_t,u_{t-k}) vs k profile is a planned addition — see
-      DISSERTATION_OUTLINE.md D.4)
+    - pairwise cosine stats within the window (pooled: frac_neg/frac_pos and
+      mean cosine over all/aligning/conflicting pairs)
+    - lag-resolved autocorrelation cos(u_t, u_{t-k}) vs lag k
+      (between_lagcos): the curvature-vs-cancellation diagnostic
     - useful path frac     against the window-start reference direction
 
   Per-step first-order loss-decrease deficit (positive = hurt):
@@ -339,3 +340,23 @@ class InterferenceMeter:
                         log[f"between_K{K}_useful_path_frac"] = float(
                             abs(sum(useful_window)) / norm_sum_w
                         )
+
+        # Lag-resolved autocorrelation of applied updates: cos(u_t, u_{t-k}) vs
+        # lag k, anchored at the most recent update. Distinguishes curvature
+        # (positive, slowly decaying toward zero) from cancellation (dips
+        # negative at small lag). Aggregated across logged steps in analysis.
+        buf = list(self.update_buffer)
+        L = len(buf)
+        if L >= 2:
+            u_last = buf[-1]
+            n_last = float(torch.norm(u_last).item())
+            prof = [float("nan")] * self.K_max
+            if n_last > 1e-12:
+                for k in range(1, min(self.K_max, L - 1) + 1):
+                    u_prev = buf[-1 - k]
+                    n_prev = float(torch.norm(u_prev).item())
+                    if n_prev > 1e-12:
+                        prof[k - 1] = float(
+                            (torch.dot(u_last, u_prev) / (n_last * n_prev)).item()
+                        )
+            log["between_lagcos"] = prof
