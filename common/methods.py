@@ -138,7 +138,7 @@ def build_method(
                 project_stage="update",                       # FIXED by design
                 projection_mode=_hp.get("projection_mode", "negative"),
                 orth_method=_hp.get("orth_method", "sequential"),
-                projection_scope=_hp.get("projection_scope", "per_tensor"),
+                projection_scope=_hp.get("projection_scope", "global"),  # global: faster, >= accuracy (Exp 10.05)
                 projection_strength=_hp.get("projection_strength", 1.0),
                 preserve_magnitude=_hp.get("preserve_magnitude", False),
                 random_projection=_hp.get("random_projection", False),
