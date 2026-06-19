@@ -137,6 +137,7 @@ def build_master(axis_filter: Optional[str]) -> Dict[str, Any]:
     # collect (key, priority, row); prefer_new_layout() then drops stale legacy
     # (bare-folder) duplicates per (folder, base, dataset).
     collected = []
+    cell_collected = []   # per-cell speed-up, every (base, cell), for the reframed tables
     for folder, label in AXES.items():
         if axis_filter and axis_filter not in folder:
             continue
@@ -144,6 +145,21 @@ def build_master(axis_filter: Optional[str]) -> Dict[str, Any]:
             cells = summary.get("cells", [])
             dataset = summary.get("dataset")
             sp = speedup_for_run(run_dir)   # {(base, cell): speed record} from curves
+            for (cb, ccell), rec in sp.items():
+                em = next((e["metrics"] for e in cells
+                           if e["base"] == cb and e["cell"] == ccell), {})
+                fa = em.get("final_test_acc", {}) if isinstance(em, dict) else {}
+                cell_collected.append(((folder, cb, dataset, ccell), prio, {
+                    "axis": label, "folder": folder, "base": cb, "dataset": dataset,
+                    "cell": ccell,
+                    "epoch_speedup": rec.get("epoch_speedup"),
+                    "wall_speedup": rec.get("wall_speedup"),
+                    "baseline_epochs": rec.get("baseline_epochs"),
+                    "method_epochs": rec.get("method_epochs"),
+                    "final_test_acc": (round(fa["mean"], 4)
+                                       if isinstance(fa, dict)
+                                       and isinstance(fa.get("mean"), (int, float)) else None),
+                }))
             for base in sorted({e["base"] for e in cells}):
                 bcells = [e for e in cells if e["base"] == base]
                 base_cell = _baseline_cell(bcells)
@@ -178,7 +194,8 @@ def build_master(axis_filter: Optional[str]) -> Dict[str, Any]:
                     "mean_deficit_per_step": _g(m, "mean_deficit_per_step"),
                 }))
     rows = prefer_new_layout(collected)
-    return {"rows": rows, "n": len(rows)}
+    cell_rows = prefer_new_layout(cell_collected)
+    return {"rows": rows, "n": len(rows), "speedup_cells": cell_rows}
 
 
 def _g(metrics, key):
@@ -197,9 +214,12 @@ def main():
     # table survives a Colab session end.
     persist_dir = _RESULTS_BASE / "09_cross_summary"
     persist_dir.mkdir(parents=True, exist_ok=True)
-    out = _HERE / "master_table.json"
     for d in (persist_dir, _HERE):
-        write_json_atomic(d / "master_table.json", master)
+        write_json_atomic(d / "master_table.json",
+                          {"rows": master["rows"], "n": master["n"]})
+        write_json_atomic(d / "speedup_cells.json",
+                          {"cells": master["speedup_cells"],
+                           "n": len(master["speedup_cells"])})
 
     print(f"\n=== BoGrad master table ({master['n']} rows) ===")
     hdr = (f"{'axis':<26}{'base':<9}{'best cell':<22}{'acc':>8}{'d-base':>8}"

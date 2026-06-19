@@ -119,11 +119,27 @@ def build():
     # collect (key, priority, row); prefer_new_layout() then drops stale legacy
     # (bare-folder) duplicates per (folder, base, dataset).
     collected = []
+    cell_collected = []   # per-cell speed-up, every (base, cell), for the reframed tables
     for folder, label in AXES.items():
         for run_dir, summary, prio in _axis_runs(folder):
             cells = summary.get("cells", [])
             dataset = summary.get("dataset")
             sp = speedup_for_run(run_dir)   # {(base, cell): speed record} from curves
+            for (cb, ccell), rec in sp.items():
+                em = next((e["metrics"] for e in cells
+                           if e["base"] == cb and e["cell"] == ccell), {})
+                fa = em.get("final_test_acc", {}) if isinstance(em, dict) else {}
+                cell_collected.append(((folder, cb, dataset, ccell), prio, {
+                    "axis": label, "folder": folder, "base": cb, "dataset": dataset,
+                    "cell": ccell,
+                    "epoch_speedup": rec.get("epoch_speedup"),
+                    "wall_speedup": rec.get("wall_speedup"),
+                    "baseline_epochs": rec.get("baseline_epochs"),
+                    "method_epochs": rec.get("method_epochs"),
+                    "final_test_acc": (round(fa["mean"], 4)
+                                       if isinstance(fa, dict)
+                                       and isinstance(fa.get("mean"), (int, float)) else None),
+                }))
             for base in sorted({e["base"] for e in cells}):
                 bcells = [e for e in cells if e["base"] == base]
                 bl = _baseline(bcells, base)
@@ -159,7 +175,8 @@ def build():
                     "I_between_K32": _g(bm, "I_between_K32_mean"),
                 }))
     rows = prefer_new_layout(collected)
-    return {"rows": rows, "n": len(rows)}
+    cell_rows = prefer_new_layout(cell_collected)
+    return {"rows": rows, "n": len(rows), "speedup_cells": cell_rows}
 
 
 def contrast():
@@ -201,7 +218,11 @@ def main():
     master = build()
     ctr = contrast()
     for d in (out_dir, _HERE):
-        write_json_atomic(d / "master_table.json", master)
+        write_json_atomic(d / "master_table.json",
+                          {"rows": master["rows"], "n": master["n"]})
+        write_json_atomic(d / "speedup_cells.json",
+                          {"cells": master["speedup_cells"],
+                           "n": len(master["speedup_cells"])})
         write_json_atomic(d / "mechanism_contrast.json", ctr)
     print(f"\n(also persisted to {out_dir})", flush=True)
 
