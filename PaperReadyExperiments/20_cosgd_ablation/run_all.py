@@ -53,10 +53,12 @@ def main():
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
     ap.add_argument("--epochs", type=int, default=None,
                     help="epoch override; None = each dataset's meta default")
-    # Default testbed = the low-dim ladder (COSGD's strong regime). Add
-    # mnist/cifar10 explicitly for the image check.
-    ap.add_argument("--datasets", nargs="+",
-                    default=["iris", "wine", "breast_cancer", "digits"])
+    # Default testbed (revised): the two real anchors, low-dim tabular (covertype)
+    # and high-dim image (cifar10). The synthetic dim-sweep and scalability remain
+    # separate scripts. Cap covertype with --train_subset to stay tractable.
+    ap.add_argument("--datasets", nargs="+", default=["covertype", "cifar10"])
+    ap.add_argument("--train_subset", type=int, default=None,
+                    help="cap train size per cell (e.g. 50000 to keep covertype tractable)")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--aggregate", action="store_true")
     args = ap.parse_args()
@@ -74,6 +76,8 @@ def main():
                 argv += ["--epochs", str(args.epochs)]
             if args.bases is not None:
                 argv += ["--bases", *args.bases]
+            if args.train_subset is not None:
+                argv += ["--train_subset", str(args.train_subset)]
         print(f"\n{'='*70}\n[run_all] AXIS {num} -> {folder}  argv={argv}\n{'='*70}", flush=True)
         try:
             _invoke(folder, argv)

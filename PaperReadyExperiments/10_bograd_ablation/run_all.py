@@ -70,6 +70,8 @@ def main():
     ap.add_argument("--epochs", type=int, default=10,
                     help="proxy epoch budget for the ablations (default 10)")
     ap.add_argument("--dataset", default="cifar10")
+    ap.add_argument("--train_subset", type=int, default=None,
+                    help="cap train size per cell (e.g. 50000 to keep covertype tractable)")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--aggregate", action="store_true",
                     help="after running, build the 10.09 master table")
@@ -87,6 +89,8 @@ def main():
             argv += ["--epochs", str(args.epochs)]
             if args.bases is not None:
                 argv += ["--bases", *args.bases]
+            if args.train_subset is not None:
+                argv += ["--train_subset", str(args.train_subset)]
         print(f"\n{'='*70}\n[run_all] AXIS {num} -> {folder}  argv={argv}\n{'='*70}", flush=True)
         try:
             _invoke(folder, argv)
