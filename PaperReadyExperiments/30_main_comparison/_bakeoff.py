@@ -76,9 +76,12 @@ def hp_axes_for(base: str, method: str) -> Dict[str, List[Any]]:
     }[base]
     axes: Dict[str, List[Any]] = {"lr": lr_grid}
     if method == "bograd":
-        # K bounded by D3 per-optimizer optima; refine from 10.01.
-        axes["K"] = {"sgd": [16, 32], "signsgd": [32, 64],
-                     "rmsprop": [8, 16], "adam": [64, 128]}[base]
+        # K bracketed around the MEASURED 10.01 optima (sgd 16, signsgd 32,
+        # rmsprop 32, adam 128), not the older D3 priors. The rmsprop bracket
+        # used to be [8,16], which excluded its own measured optimum of 32 and
+        # so could never reproduce the ablation's recommended setting.
+        axes["K"] = {"sgd": [8, 16, 32], "signsgd": [16, 32, 64],
+                     "rmsprop": [16, 32, 64], "adam": [64, 128]}[base]
         axes["projection_mode"] = ["negative"]
     elif method == "cosgd":
         # RECLAIMED COSGD (03_cosgd_scrutiny/FINDINGS.md): the conference-paper
