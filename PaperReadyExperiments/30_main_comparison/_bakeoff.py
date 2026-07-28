@@ -143,6 +143,13 @@ def run_bakeoff_cell(
     jm = JobManager(out_root / "cells")
     cell_tag = f"{base}__{method}"
 
+    # The dataset's recipe weight decay is part of the benchmark, not a tuned
+    # knob: pin it as a single-value axis so tuning and the final runs agree.
+    axes = hp_axes_for(base, method)
+    wd = meta.get("weight_decay")
+    if wd:
+        axes["weight_decay"] = [wd]
+
     # 1) tune on val (cached) ------------------------------------------------
     best_hp: Dict[str, Any] = {}
     if fixed_hp is not None:
@@ -151,7 +158,7 @@ def run_bakeoff_cell(
         tr = tune_cell(
             dataset=dataset, method=method, base=base, model_name=model_name,
             num_classes=num_classes, train_dataset=bundle.train, val_dataset=bundle.val,
-            hp_axes=hp_axes_for(base, method),
+            hp_axes=axes,
             out_dir=out_root / "tune" / cell_tag, device=device,
             epochs=(tune_epochs or max(3, epochs // 3)), batch_size=batch_size,
             tune_seeds=[seeds[0]], search="grid",
@@ -160,8 +167,9 @@ def run_bakeoff_cell(
         best_hp = tr.best_hp
         print(f"  [{dataset}/{cell_tag}] tuned -> {best_hp} (val {tr.best_val_acc:.4f})", flush=True)
     else:
-        ax = hp_axes_for(base, method)
-        best_hp = {k: v[len(v) // 2] for k, v in ax.items()}  # middle of each grid
+        best_hp = {k: v[len(v) // 2] for k, v in axes.items()}  # middle of each grid
+    if wd:
+        best_hp.setdefault("weight_decay", wd)
 
     # 2) multi-seed final runs on test, paired order -------------------------
     rows: List[Dict[str, Any]] = []
@@ -243,10 +251,18 @@ def run_bakeoff(
 
     all_rows: List[Dict[str, Any]] = []
     for dataset in datasets:
-        bundle = get_dataset(dataset, val_fraction=0.1, seed=2026)
+        # The bakeoff is the head-to-head evaluation, so the image benchmarks
+        # run the STANDARD recipe (crop + flip + weight decay). Without it a
+        # ResNet-18 memorises CIFAR-100 by epoch ~15 and every arm saturates at
+        # the same overfitted ceiling, which measures the recipe rather than the
+        # optimiser. The ablation chapters deliberately keep augment=False.
+        bundle = get_dataset(dataset, val_fraction=0.1, seed=2026, augment=True)
         ep = epochs if epochs is not None else bundle.meta["epochs"]
         bs = bundle.meta["batch_size"]
-        ref_ds = balanced_reference_subset(bundle.train, num_classes=bundle.meta["num_classes"],
+        # Reference gradients must be measured on a deterministic view of the
+        # training data, never on randomly cropped samples.
+        ref_ds = balanced_reference_subset(bundle.train_eval or bundle.train,
+                                           num_classes=bundle.meta["num_classes"],
                                            n_per_class=ref_n_per_class, seed=2026)
         ds_dir = campaign_dir / dataset
         for base in bases:

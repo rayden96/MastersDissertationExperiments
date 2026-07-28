@@ -35,6 +35,7 @@ for p in (str(_REPO), str(_PRE)):
 
 from common.storage import read_json, write_json_atomic   # noqa: E402
 from common.plotting import apply_thesis_rcparams, PALETTE, METHOD_STYLE  # noqa: E402
+from _summary_utils import TARGET_FRAC                    # noqa: E402
 
 METHOD_ORDER = ["baseline", "cosgd", "bograd", "graddrop", "dropout"]
 
@@ -208,14 +209,16 @@ def _epochs_to(curve, target):
     return None
 
 
-def view_speedup(campaign, grouped, target_frac=1.0):
+def view_speedup(campaign, grouped, target_frac=TARGET_FRAC):
     """For each (dataset, base): how many epochs each method needs to reach the
     BASELINE's target accuracy, and the speed-up factor (baseline_epochs /
     method_epochs). This is the primary 'does it train faster' result.
 
-    target = `target_frac` x baseline's final mean accuracy (1.0 = match baseline's
-    end-of-training accuracy; e.g. 0.95 = reach 95% of it). Also reports epoch-1
-    accuracy (early-progress) and the steps-to-target speed-up via mean step time.
+    target = `target_frac` x baseline's final mean accuracy. The default is 0.99,
+    not 1.0: see _summary_utils.TARGET_FRAC for why matching the baseline's mean
+    final accuracy exactly is an unstable target on a plateaued curve. Also
+    reports epoch-1 accuracy (early-progress) and the steps-to-target speed-up
+    via mean step time.
     """
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     apply_thesis_rcparams("dense")
@@ -424,8 +427,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--campaign", default=None)
     ap.add_argument("--only", nargs="+", default=["00", "01", "02", "03", "09", "10"])
-    ap.add_argument("--target-frac", type=float, default=1.0,
-                    help="speed-up target as fraction of baseline final acc (e.g. 0.95)")
+    ap.add_argument("--target-frac", type=float, default=TARGET_FRAC,
+                    help="speed-up target as fraction of baseline final acc "
+                         f"(default {TARGET_FRAC}; 1.0 is unstable on plateaued curves)")
     args = ap.parse_args()
 
     campaign = _resolve_campaign(args.campaign)

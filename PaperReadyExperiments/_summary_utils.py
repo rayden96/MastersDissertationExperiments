@@ -147,7 +147,23 @@ def read_cell_results(run_dir: Path) -> Dict[tuple, Dict[str, list]]:
     return out
 
 
-def speedup_for_run(run_dir: Path, target_frac: float = 1.0) -> Dict[tuple, dict]:
+# Target = TARGET_FRAC x the baseline's mean final accuracy.
+#
+# Not 1.0. The target is the MEAN of the baseline's per-seed finals, so on a
+# plateaued curve roughly half the baseline's own seeds never exceed it, and
+# each of those is charged len(curve)+1 epochs. Measured on the CIFAR-100
+# baseline (3 seeds, ResNet-18): at 1.00 the seeds reach the target at
+# [never, 15, 18] -> charged [51, 15, 18] -> 28.0 epochs, against 15.7 at 0.99.
+# That single non-reaching seed inflates every speed-up on the dataset by ~1.8x.
+# At 0.99 ("epochs to within 1% of the baseline's final accuracy", the usual
+# convention in the optimiser literature) every seed reaches the target on the
+# steep part of the curve and the statistic is stable. A method that converges
+# quickly to a WORSE plateau is still penalised, because it then fails to reach
+# the target at all, and final accuracy is reported alongside regardless.
+TARGET_FRAC = 0.99
+
+
+def speedup_for_run(run_dir: Path, target_frac: float = TARGET_FRAC) -> Dict[tuple, dict]:
     """{(base,label): speed-record} for every non-baseline cell vs the axis
     baseline, from persisted epoch curves. epoch_speedup = baseline_epochs /
     method_epochs to reach `target_frac` x baseline final acc (>1 = faster);
@@ -182,6 +198,8 @@ def speedup_for_run(run_dir: Path, target_frac: float = 1.0) -> Dict[tuple, dict
             wall = (sp * (b_spt / m_spt)) if (sp and b_spt and m_spt) else None
             out[(base, label)] = {
                 "baseline_cell": bl,
+                "target_frac": target_frac,
+                "target_acc": round(tgt, 4),
                 "baseline_epochs": round(b_ep, 3),
                 "method_epochs": round(m_ep, 3),
                 "epoch_speedup": round(sp, 3) if sp else None,
@@ -192,4 +210,5 @@ def speedup_for_run(run_dir: Path, target_frac: float = 1.0) -> Dict[tuple, dict
 
 
 __all__ = ["prefer_new_layout", "latest_runs", "epochs_to_target",
-           "pick_baseline_label", "read_cell_results", "speedup_for_run"]
+           "pick_baseline_label", "read_cell_results", "speedup_for_run",
+           "TARGET_FRAC"]

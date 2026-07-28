@@ -47,6 +47,11 @@ class DatasetBundle:
     val: Dataset
     test: Dataset
     meta: Dict[str, Any] = field(default_factory=dict)
+    # The training split under the EVALUATION transform. Only differs from
+    # `train` when augmentation is on; consumers that need a deterministic view
+    # of the training data (the interference meter's reference set) should
+    # prefer `train_eval or train`.
+    train_eval: Optional[Dataset] = None
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +113,24 @@ def balanced_reference_subset(dataset, num_classes: int, n_per_class: int, seed:
 # ---------------------------------------------------------------------------
 # Image datasets (torchvision)
 # ---------------------------------------------------------------------------
-def _image_bundle(name: str, val_fraction: float, seed: int) -> DatasetBundle:
+def _image_bundle(name: str, val_fraction: float, seed: int,
+                  augment: bool = False) -> DatasetBundle:
+    """Image bundle. `augment=True` applies the standard CIFAR training recipe
+    (random 32x32 crop from 4-pixel padding + horizontal flip, and a
+    recommended weight decay in meta) to the TRAIN split only.
+
+    Augmentation is CIFAR-only: horizontal flips are wrong for MNIST/EMNIST
+    glyphs, so the flag is a no-op there.
+
+    The evaluation splits must never see the training transform, and val is
+    carved out of the same underlying training set, so two dataset objects are
+    built over the same files: one with the training transform and one with the
+    evaluation transform. The split indices are shared, and val is taken from
+    the evaluation copy. `train_eval` exposes the un-augmented view of the
+    training split, which is what the interference meter's reference gradient
+    should be computed on (a reference that is itself randomly cropped is not a
+    fixed direction to measure against).
+    """
     from torchvision import datasets as tvd
     from torchvision import transforms
 
@@ -116,40 +138,55 @@ def _image_bundle(name: str, val_fraction: float, seed: int) -> DatasetBundle:
     root = str(_DATA)
 
     if name == "mnist":
-        tf = transforms.Compose([transforms.ToTensor(),
-                                 transforms.Normalize((0.1307,), (0.3081,))])
-        tr = tvd.MNIST(root, train=True, download=True, transform=tf)
-        te = tvd.MNIST(root, train=False, download=True, transform=tf)
+        eval_tf = transforms.Compose([transforms.ToTensor(),
+                                      transforms.Normalize((0.1307,), (0.3081,))])
+        ctor, kw = tvd.MNIST, {}
         meta = dict(num_classes=10, input_kind="image", model="grayscale_cnn",
                     model_kwargs={}, in_shape=(1, 28, 28), epochs=10, batch_size=128)
+        augment = False
     elif name == "emnist_balanced":
-        tf = transforms.Compose([transforms.ToTensor(),
-                                 transforms.Normalize((0.1751,), (0.3332,))])
-        tr = tvd.EMNIST(root, split="balanced", train=True, download=True, transform=tf)
-        te = tvd.EMNIST(root, split="balanced", train=False, download=True, transform=tf)
+        eval_tf = transforms.Compose([transforms.ToTensor(),
+                                      transforms.Normalize((0.1751,), (0.3332,))])
+        ctor, kw = tvd.EMNIST, {"split": "balanced"}
         meta = dict(num_classes=47, input_kind="image", model="grayscale_cnn",
                     model_kwargs={}, in_shape=(1, 28, 28), epochs=15, batch_size=128)
+        augment = False
     elif name == "cifar10":
-        tf = transforms.Compose([transforms.ToTensor(),
-                                 transforms.Normalize((0.4914, 0.4822, 0.4465),
-                                                      (0.2470, 0.2435, 0.2616))])
-        tr = tvd.CIFAR10(root, train=True, download=True, transform=tf)
-        te = tvd.CIFAR10(root, train=False, download=True, transform=tf)
+        eval_tf = transforms.Compose([transforms.ToTensor(),
+                                      transforms.Normalize((0.4914, 0.4822, 0.4465),
+                                                           (0.2470, 0.2435, 0.2616))])
+        ctor, kw = tvd.CIFAR10, {}
         meta = dict(num_classes=10, input_kind="image", model="small_cifar_cnn",
                     model_kwargs={}, in_shape=(3, 32, 32), epochs=30, batch_size=128)
     elif name == "cifar100":
-        tf = transforms.Compose([transforms.ToTensor(),
-                                 transforms.Normalize((0.5071, 0.4865, 0.4409),
-                                                      (0.2673, 0.2564, 0.2762))])
-        tr = tvd.CIFAR100(root, train=True, download=True, transform=tf)
-        te = tvd.CIFAR100(root, train=False, download=True, transform=tf)
+        eval_tf = transforms.Compose([transforms.ToTensor(),
+                                      transforms.Normalize((0.5071, 0.4865, 0.4409),
+                                                           (0.2673, 0.2564, 0.2762))])
+        ctor, kw = tvd.CIFAR100, {}
         meta = dict(num_classes=100, input_kind="image", model="resnet18_cifar",
                     model_kwargs={}, in_shape=(3, 32, 32), epochs=50, batch_size=128)
     else:
         raise ValueError(name)
 
-    train_sub, val_sub = stratified_val_split(tr, val_fraction, seed)
-    return DatasetBundle(train_sub, val_sub, te, meta)
+    train_tf = eval_tf
+    if augment:
+        train_tf = transforms.Compose([
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+            *eval_tf.transforms,
+        ])
+        meta["augment"] = True
+        meta["weight_decay"] = 5e-4
+
+    tr_plain = ctor(root, train=True, download=True, transform=eval_tf, **kw)
+    te = ctor(root, train=False, download=True, transform=eval_tf, **kw)
+
+    train_sub, val_sub = stratified_val_split(tr_plain, val_fraction, seed)
+    train_eval = train_sub
+    if augment:
+        tr_aug = ctor(root, train=True, download=True, transform=train_tf, **kw)
+        train_sub = Subset(tr_aug, train_sub.indices)
+    return DatasetBundle(train_sub, val_sub, te, meta, train_eval=train_eval)
 
 
 # ---------------------------------------------------------------------------
@@ -383,10 +420,16 @@ SMALL_DATASETS = ("iris", "wine", "breast_cancer", "digits")
 
 
 def get_dataset(name: str, *, val_fraction: float = 0.1, seed: int = 2026,
-                **kwargs) -> DatasetBundle:
-    """Build a registered dataset bundle (train/val/test + meta)."""
+                augment: bool = False, **kwargs) -> DatasetBundle:
+    """Build a registered dataset bundle (train/val/test + meta).
+
+    `augment=True` requests the standard training recipe for the dataset; it is
+    currently defined only for CIFAR-10/100 and is ignored elsewhere. It
+    defaults to False so the ablation studies keep the clean, unregularised
+    geometry they were designed around; the main comparison turns it on.
+    """
     if name in ("mnist", "emnist_balanced", "cifar10", "cifar100"):
-        return _image_bundle(name, val_fraction, seed)
+        return _image_bundle(name, val_fraction, seed, augment=augment)
     if name == "covertype":
         return _covertype_bundle(val_fraction, seed)
     if name == "yahoo_answers":
