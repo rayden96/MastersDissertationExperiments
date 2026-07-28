@@ -54,6 +54,14 @@ from interference.summary import summarize_run                   # noqa: E402
 from interference.torch_classification import TorchClassificationProblem  # noqa: E402
 
 
+# COSGD is excluded on many-class datasets (EMNIST-47, CIFAR-100): its per-step
+# cost grows super-linearly in the class count (measured by 20.07 scalability),
+# so running it there would be an impractical bill for a foregone conclusion.
+# The exclusion is a stated protocol rule in Chapter 6, justified by Chapter 4's
+# scalability section — not a silent omission.
+COSGD_MAX_CLASSES = 10
+
+
 # ---------------------------------------------------------------------------
 # Per-(base, method) HP search space — bounded by the ablation winners.
 # Keep small: the bakeoff tunes MANY cells. lr is the universal axis; method
@@ -243,6 +251,10 @@ def run_bakeoff(
         ds_dir = campaign_dir / dataset
         for base in bases:
             for method in methods:
+                if method == "cosgd" and bundle.meta["num_classes"] > COSGD_MAX_CLASSES:
+                    print(f"  [{dataset}] skip cosgd: {bundle.meta['num_classes']} classes "
+                          f"> {COSGD_MAX_CLASSES} (excluded by the 20.07 scalability wall)", flush=True)
+                    continue
                 t0 = time.time()
                 rows = run_bakeoff_cell(
                     dataset=dataset, base=base, method=method, bundle=bundle, ref_ds=ref_ds,

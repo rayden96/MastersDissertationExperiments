@@ -32,7 +32,7 @@ for p in (str(_REPO), str(_PRE)):
         sys.path.insert(0, p)
 
 from common.storage import read_json, write_json_atomic, get_results_root  # noqa: E402
-from _summary_utils import prefer_new_layout, speedup_for_run  # noqa: E402
+from _summary_utils import latest_runs, prefer_new_layout, speedup_for_run  # noqa: E402
 
 # Axes persist under get_results_root() (Drive on Colab) as
 # 10_bograd_ablation/<axis_name>/...  where axis_name is e.g. '10_01_buffer_K'.
@@ -51,53 +51,20 @@ AXES = {
 }
 
 
-def _run_rank(run_dir: Path) -> tuple:
-    """Rank a run for 'best per parent': prefer MOST cells (most complete), then
-    most recent mtime. Robust to mixed run-dir naming (old timestamps vs new
-    config-hash names) where a plain string sort would mis-order. With one
-    complete run + several partial re-runs, the complete one always wins."""
-    try:
-        n_cells = len(read_json(run_dir / "summary.json").get("cells", []))
-    except Exception:
-        n_cells = 0
-    try:
-        mtime = (run_dir / "summary.json").stat().st_mtime
-    except Exception:
-        mtime = 0.0
-    return (n_cells, mtime)
-
-
-def _latest_runs(axis_dir: Path) -> List[tuple]:
-    """(run_dir, summary) per parent dir, choosing the most-complete/most-recent
-    run, so duplicate re-runs under one parent never need manual deletion."""
-    out = []
-    if not axis_dir.exists():
-        return out
-    by_parent: Dict[Path, Path] = {}
-    for s in axis_dir.rglob("summary.json"):
-        parent = s.parent.parent  # the results/<...>/ dir containing run_<id>/
-        if parent not in by_parent or _run_rank(s.parent) > _run_rank(by_parent[parent]):
-            by_parent[parent] = s.parent
-    for run_dir in by_parent.values():
-        try:
-            out.append((run_dir, read_json(run_dir / "summary.json")))
-        except Exception:
-            pass
-    return out
-
-
 def _axis_runs(folder: str) -> List[tuple]:
     """All (run_dir, summary, priority) for an axis, from the NEW prefixed Drive
     layout ('10_<folder>*', priority 1) and the LEGACY bare layout ('<folder>',
-    priority 0). prefer_new_layout() later drops stale bare duplicates."""
+    priority 0). prefer_new_layout() later drops stale bare duplicates.
+    latest_runs (shared, _summary_utils) groups per (folder, dataset), so the
+    covertype + cifar10 testbed coexists under one axis folder."""
     prefix = f"10_{folder}"
     out = []
     for base_dir in (_RESULTS_BASE, _AXIS_ROOT):
         if not base_dir.exists():
             continue
         for d in base_dir.glob(f"{prefix}*"):
-            out += [(rd, s, 1) for rd, s in _latest_runs(d)]
-        out += [(rd, s, 0) for rd, s in _latest_runs(base_dir / folder)]
+            out += [(rd, s, 1) for rd, s in latest_runs(d)]
+        out += [(rd, s, 0) for rd, s in latest_runs(base_dir / folder)]
     return out
 
 
@@ -232,7 +199,7 @@ def main():
               f"{(f'{sp:.2f}x' if sp is not None else '  n/a'):>7}"
               f"{(r['I_between_K32'] if r['I_between_K32'] is not None else float('nan')):>10.3f}"
               f"{(r['between_K32_mean_cos'] if r['between_K32_mean_cos'] is not None else float('nan')):>8.3f}")
-    print(f"\nwrote {out}")
+    print(f"\nwrote {persist_dir / 'master_table.json'} (and repo-local copy)")
 
 
 if __name__ == "__main__":

@@ -67,9 +67,13 @@ def main():
     ap.add_argument("--bases", nargs="+", default=None,
                     help="base optimizers (default: each axis's own default set)")
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
-    ap.add_argument("--epochs", type=int, default=10,
-                    help="proxy epoch budget for the ablations (default 10)")
-    ap.add_argument("--dataset", default="cifar10")
+    ap.add_argument("--epochs", type=int, default=None,
+                    help="epoch override; None = each dataset's meta default")
+    # Default testbed (revised, shared with 20_cosgd_ablation): low-dim tabular
+    # (covertype) + high-dim image (cifar10). The CIFAR-100 rung is a transfer
+    # confirmation read from the 30_main_comparison bakeoff (10_scale_transfer),
+    # not a full ablation grid. Cap covertype with --train_subset.
+    ap.add_argument("--datasets", nargs="+", default=["covertype", "cifar10"])
     ap.add_argument("--train_subset", type=int, default=None,
                     help="cap train size per cell (e.g. 50000 to keep covertype tractable)")
     ap.add_argument("--smoke", action="store_true")
@@ -78,26 +82,30 @@ def main():
     args = ap.parse_args()
 
     t0 = time.time()
-    for num in args.axes:
-        if num not in AXES:
-            print(f"!! unknown axis {num}, skipping"); continue
-        folder = AXES[num]
-        argv = ["--dataset", args.dataset, "--seeds", *map(str, args.seeds)]
-        if args.smoke:
-            argv = ["--smoke"]
-        else:
-            argv += ["--epochs", str(args.epochs)]
-            if args.bases is not None:
-                argv += ["--bases", *args.bases]
-            if args.train_subset is not None:
-                argv += ["--train_subset", str(args.train_subset)]
-        print(f"\n{'='*70}\n[run_all] AXIS {num} -> {folder}  argv={argv}\n{'='*70}", flush=True)
-        try:
-            _invoke(folder, argv)
-        except SystemExit:
-            pass  # axis used argparse exit; continue to next
-        except Exception as e:
-            print(f"!! axis {num} ({folder}) raised {type(e).__name__}: {e}", flush=True)
+    # Dataset outer, axis inner: the cheap dataset (covertype) completes fully
+    # first, so partial Colab sessions still land whole per-dataset result sets.
+    for dataset in args.datasets:
+        for num in args.axes:
+            if num not in AXES:
+                print(f"!! unknown axis {num}, skipping"); continue
+            folder = AXES[num]
+            argv = ["--dataset", dataset, "--seeds", *map(str, args.seeds)]
+            if args.smoke:
+                argv = ["--smoke"]
+            else:
+                if args.epochs is not None:
+                    argv += ["--epochs", str(args.epochs)]
+                if args.bases is not None:
+                    argv += ["--bases", *args.bases]
+                if args.train_subset is not None:
+                    argv += ["--train_subset", str(args.train_subset)]
+            print(f"\n{'='*70}\n[run_all] {dataset} AXIS {num} -> {folder}  argv={argv}\n{'='*70}", flush=True)
+            try:
+                _invoke(folder, argv)
+            except SystemExit:
+                pass  # axis used argparse exit; continue to next
+            except Exception as e:
+                print(f"!! axis {num} ({folder}) raised {type(e).__name__}: {e}", flush=True)
 
     if args.aggregate:
         print(f"\n{'='*70}\n[run_all] AGGREGATE -> 09_cross_summary\n{'='*70}", flush=True)

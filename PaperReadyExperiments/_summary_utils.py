@@ -47,6 +47,42 @@ def prefer_new_layout(collected: List[Tuple[tuple, int, dict]]) -> List[dict]:
     return [row for key, prio, row in collected if prio == maxprio[key]]
 
 
+# --- run discovery ---------------------------------------------------------
+def _run_rank(n_cells: int, run_dir: Path) -> tuple:
+    """Rank a run for 'best per group': prefer MOST cells (most complete), then
+    most recent mtime. Robust to mixed run-dir naming (old timestamps vs new
+    config-hash names) where a plain string sort would mis-order."""
+    try:
+        mtime = (run_dir / "summary.json").stat().st_mtime
+    except Exception:
+        mtime = 0.0
+    return (n_cells, mtime)
+
+
+def latest_runs(axis_dir: Path) -> List[Tuple[Path, dict]]:
+    """(run_dir, summary) per (parent dir, dataset), choosing the most-complete /
+    most-recent run. Grouping includes the dataset recorded in summary.json, so
+    ONE axis folder can hold runs for several datasets (the shared covertype +
+    cifar10 testbed) without one shadowing the other; duplicate re-runs of the
+    SAME dataset still collapse to the best one, so they never need manual
+    deletion."""
+    out: List[Tuple[Path, dict]] = []
+    if not axis_dir.exists():
+        return out
+    best: Dict[tuple, tuple] = {}   # (parent, dataset) -> (rank, run_dir, summary)
+    for s in axis_dir.rglob("summary.json"):
+        run_dir = s.parent
+        try:
+            summ = read_json(s)
+        except Exception:
+            continue
+        key = (run_dir.parent, summ.get("dataset"))
+        r = _run_rank(len(summ.get("cells", [])), run_dir)
+        if key not in best or r > best[key][0]:
+            best[key] = (r, run_dir, summ)
+    return [(rd, s) for (_r, rd, s) in best.values()]
+
+
 # --- convergence speed-up --------------------------------------------------
 def epochs_to_target(curve, target) -> Optional[int]:
     """First 1-based epoch at which `curve` reaches `target`, else None."""
@@ -155,5 +191,5 @@ def speedup_for_run(run_dir: Path, target_frac: float = 1.0) -> Dict[tuple, dict
     return out
 
 
-__all__ = ["prefer_new_layout", "epochs_to_target", "pick_baseline_label",
-           "read_cell_results", "speedup_for_run"]
+__all__ = ["prefer_new_layout", "latest_runs", "epochs_to_target",
+           "pick_baseline_label", "read_cell_results", "speedup_for_run"]

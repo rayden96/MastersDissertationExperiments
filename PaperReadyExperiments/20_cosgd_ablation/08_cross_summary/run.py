@@ -33,7 +33,7 @@ for p in (str(_REPO), str(_PRE)):
         sys.path.insert(0, p)
 
 from common.storage import read_json, write_json_atomic, get_results_root  # noqa: E402
-from _summary_utils import prefer_new_layout, speedup_for_run  # noqa: E402
+from _summary_utils import latest_runs, prefer_new_layout, speedup_for_run  # noqa: E402
 
 # Axes now persist under get_results_root() (Drive on Colab). Scan there; fall
 # back to the repo-local axis folders for any results produced before this change.
@@ -47,43 +47,6 @@ AXES = {
     "05_combine": "combine rule",
     "06_base_optimizer": "base optimizer",
 }
-
-
-def _run_rank(run_dir: Path) -> tuple:
-    """Rank a run for 'best per parent': prefer MOST cells (most complete),
-    then most recent mtime. Robust to mixed run-dir naming (old timestamps vs
-    new config-hash names) where a plain string sort would mis-order."""
-    try:
-        summ = read_json(run_dir / "summary.json")
-        n_cells = len(summ.get("cells", []))
-    except Exception:
-        n_cells = 0
-    try:
-        mtime = (run_dir / "summary.json").stat().st_mtime
-    except Exception:
-        mtime = 0.0
-    return (n_cells, mtime)
-
-
-def _latest_runs(axis_dir: Path) -> List[tuple]:
-    """(run_dir, summary) per parent dir, choosing the most-complete/most-recent
-    run. (When multiple run_<id> folders exist under one parent from re-runs, the
-    best one wins; the rest are ignored — so duplicate runs never need manual
-    deletion.)"""
-    out = []
-    if not axis_dir.exists():
-        return out
-    by_parent: Dict[Path, Path] = {}
-    for s in axis_dir.rglob("summary.json"):
-        parent = s.parent.parent
-        if parent not in by_parent or _run_rank(s.parent) > _run_rank(by_parent[parent]):
-            by_parent[parent] = s.parent
-    for run_dir in by_parent.values():
-        try:
-            out.append((run_dir, read_json(run_dir / "summary.json")))
-        except Exception:
-            pass
-    return out
 
 
 def _g(metrics, key):
@@ -110,8 +73,8 @@ def _axis_runs(folder: str):
         if not base_dir.exists():
             continue
         for d in base_dir.glob(f"{prefix}*"):   # 20_05_combine, 20_05_combine_iris, ...
-            out += [(rd, s, 1) for rd, s in _latest_runs(d)]
-        out += [(rd, s, 0) for rd, s in _latest_runs(base_dir / folder)]
+            out += [(rd, s, 1) for rd, s in latest_runs(d)]
+        out += [(rd, s, 0) for rd, s in latest_runs(base_dir / folder)]
     return out
 
 
