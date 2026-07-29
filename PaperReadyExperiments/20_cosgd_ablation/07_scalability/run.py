@@ -128,9 +128,13 @@ def main():
                   f"COSGD {cos_sec*1000:.1f}ms/{cos_mem:.0f}MB  ({cos_sec/base_sec:.1f}x)", flush=True)
         tag = "synthetic"
 
-    out_path = res_dir / f"scalability_{tag}.json"
-    storage.write_json_atomic(out_path, out)
-    print(f"\nwrote {out_path}")
+    # Persist to Drive as well as the repo-local folder. The repo copy lives in
+    # Colab's ephemeral /content, so a run that only wrote there was lost the
+    # moment the session ended.
+    persist_dir = storage.persistent_dir("20_cosgd_ablation/07_scalability")
+    for d in (persist_dir, res_dir):
+        storage.write_json_atomic(d / f"scalability_{tag}.json", out)
+    print(f"\nwrote {persist_dir / f'scalability_{tag}.json'} (+ repo-local copy)")
 
 
 if __name__ == "__main__":
