@@ -108,9 +108,14 @@ class ResNetCIFAR(nn.Module):
 
     `blocks_per_stage` selects depth: (2,2,2,2)=ResNet-18, (3,4,6,3)=ResNet-34.
     ResNet18CIFAR was moved verbatim from 03_large_cifar100/run.py.
+
+    `dropout_p` adds activation dropout after global pooling, before the
+    classifier, matching the placement used by the other models in this registry
+    so the dropout comparator arm is defined identically across benchmarks.
     """
 
-    def __init__(self, num_classes: int = 100, blocks_per_stage=(2, 2, 2, 2)):
+    def __init__(self, num_classes: int = 100, blocks_per_stage=(2, 2, 2, 2),
+                 dropout_p: float = 0.0):
         super().__init__()
         self.conv1 = nn.Conv2d(3, 64, 3, stride=1, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
@@ -119,6 +124,7 @@ class ResNetCIFAR(nn.Module):
         self.layer3 = self._make_layer(128, 256, blocks_per_stage[2], stride=2)
         self.layer4 = self._make_layer(256, 512, blocks_per_stage[3], stride=2)
         self.pool = nn.AdaptiveAvgPool2d((1, 1))
+        self.drop = nn.Dropout(dropout_p) if dropout_p > 0 else nn.Identity()
         self.fc = nn.Linear(512, num_classes)
 
     @staticmethod
@@ -132,15 +138,15 @@ class ResNetCIFAR(nn.Module):
         x = F.relu(self.bn1(self.conv1(x)))
         x = self.layer1(x); x = self.layer2(x); x = self.layer3(x); x = self.layer4(x)
         x = self.pool(x).flatten(1)
-        return self.fc(x)
+        return self.fc(self.drop(x))
 
 
-def ResNet18CIFAR(num_classes: int = 100):
-    return ResNetCIFAR(num_classes, blocks_per_stage=(2, 2, 2, 2))
+def ResNet18CIFAR(num_classes: int = 100, dropout_p: float = 0.0):
+    return ResNetCIFAR(num_classes, blocks_per_stage=(2, 2, 2, 2), dropout_p=dropout_p)
 
 
-def ResNet34CIFAR(num_classes: int = 100):
-    return ResNetCIFAR(num_classes, blocks_per_stage=(3, 4, 6, 3))
+def ResNet34CIFAR(num_classes: int = 100, dropout_p: float = 0.0):
+    return ResNetCIFAR(num_classes, blocks_per_stage=(3, 4, 6, 3), dropout_p=dropout_p)
 
 
 # ---------------------------------------------------------------------------
