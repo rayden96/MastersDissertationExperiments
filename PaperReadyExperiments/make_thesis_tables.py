@@ -296,9 +296,11 @@ def build_chapter(which: str, out_dir: Path, datasets: Sequence[str]) -> int:
         written += 1
 
     if which == "cosgd":
-        p = _find("20_cosgd_ablation", "07_scalability", "results", "scalability_real.json")
-        if p is None:
-            p = _HERE / "20_cosgd_ablation" / "07_scalability" / "results" / "scalability_real.json"
+        # Two layouts: persistent_dir() writes <root>/20_cosgd_ablation/07_scalability/,
+        # while the repo-local copy sits under .../07_scalability/results/.
+        p = (_find("20_cosgd_ablation", "07_scalability", "scalability_real.json")
+             or _find("20_cosgd_ablation", "07_scalability", "results", "scalability_real.json")
+             or _HERE / "20_cosgd_ablation" / "07_scalability" / "results" / "scalability_real.json")
         if p.exists():
             try:
                 tex = _scalability_table(read_json(p).get("points", []))
