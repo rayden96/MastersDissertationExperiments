@@ -39,27 +39,44 @@ def _plt():
     return plt
 
 
+# The dissertation inputs these by fixed name (chapters/experiments/main.tex),
+# one figure per axis, so emit exactly those and put the per-dataset views in
+# panels rather than in separate files.
+FIGNAME = {
+    "lr":        "30_04_sensitivity_lr.png",
+    "K":         "30_05_sensitivity_K.png",
+    "batch":     "30_06_sensitivity_batch.png",
+    "scale":     "30_07_scale.png",
+    "gradstats": "30_08_gradstats.png",
+}
+
+
 def plot_lr_or_batch(kind):
     plt = _plt(); apply_thesis_rcparams()
     data = read_json(_HERE / "_sensitivity" / f"sensitivity_{kind}.json")
     xkey = "lr" if kind == "lr" else "batch"
-    for ds, points in data["datasets"].items():
+    datasets = list(data["datasets"])
+    fig, axes = plt.subplots(1, len(datasets), figsize=(6.5 * len(datasets), 5),
+                             squeeze=False)
+    for ax, ds in zip(axes.flatten(), datasets):
         by_method = defaultdict(list)
-        for p in points:
+        for p in data["datasets"][ds]:
             by_method[p["method"]].append((p[xkey], p["acc"]))
-        fig, ax = plt.subplots(figsize=(7, 5))
-        for method, pts in by_method.items():
+        for method, pts in sorted(by_method.items()):
             pts.sort()
             xs, ys = zip(*pts)
-            ax.plot(xs, ys, marker="o", linestyle=METHOD_STYLE.get(method, "-"), label=method)
+            ax.plot(xs, ys, marker="o", linestyle=METHOD_STYLE.get(method, "-"),
+                    label=method)
         ax.set_xscale("log")
         ax.set_xlabel("learning rate" if kind == "lr" else "batch size")
         ax.set_ylabel("final test accuracy")
-        ax.set_title(f"{'30.04' if kind=='lr' else '30.06'}  {ds} — {kind} sensitivity")
+        ax.set_title(ds)
         ax.legend()
-        out = _HERE / "_sensitivity" / f"{kind}_{ds}.png"
-        fig.savefig(out, bbox_inches="tight"); plt.close(fig)
-        print(f"wrote {out}")
+    fig.suptitle(f"{'30.04' if kind == 'lr' else '30.06'} — "
+                 f"{'learning-rate' if kind == 'lr' else 'batch-size'} sensitivity", y=1.02)
+    out = _HERE / "_sensitivity" / FIGNAME[kind]
+    fig.savefig(out, bbox_inches="tight"); plt.close(fig)
+    print(f"wrote {out}")
 
 
 def plot_K():
@@ -70,9 +87,9 @@ def plot_K():
         points = sorted(points, key=lambda p: p["K"])
         ax.plot([p["K"] for p in points], [p["acc"] for p in points], marker="o", label=ds)
     ax.set_xscale("log", base=2); ax.set_xlabel("BoGrad buffer K")
-    ax.set_ylabel("final test accuracy"); ax.set_title("30.05  K sensitivity per dataset")
+    ax.set_ylabel("final test accuracy"); ax.set_title("30.05 — K sensitivity per dataset")
     ax.legend()
-    out = _HERE / "_sensitivity" / "K_sensitivity.png"
+    out = _HERE / "_sensitivity" / FIGNAME["K"]
     fig.savefig(out, bbox_inches="tight"); plt.close(fig)
     print(f"wrote {out}")
 
@@ -82,21 +99,32 @@ def plot_scale():
     data = read_json(_HERE / "_scale" / "scale_30_07.json")
     by_method = defaultdict(list)
     for p in data["points"]:
-        by_method[p["method"]].append((p["params"], p["final_test_acc"], p["sec_per_step"]))
+        # Points recorded as OOM carry no measurements, and a crashed sweep can
+        # leave a point without params or timing; skip rather than raise.
+        if p.get("oom"):
+            continue
+        if p.get("params") is None or p.get("final_test_acc") is None:
+            continue
+        by_method[p["method"]].append((p["params"], p["final_test_acc"],
+                                       p.get("sec_per_step")))
     fig, (axA, axB) = plt.subplots(1, 2, figsize=(13, 5))
-    for method, pts in by_method.items():
+    for method, pts in sorted(by_method.items()):
         pts.sort()
-        params = [p[0] for p in pts]
-        axA.plot(params, [p[1] for p in pts], marker="o",
+        axA.plot([p[0] for p in pts], [p[1] for p in pts], marker="o",
                  linestyle=METHOD_STYLE.get(method, "-"), label=method)
-        axB.plot(params, [p[2] * 1000 for p in pts], marker="s",
-                 linestyle=METHOD_STYLE.get(method, "-"), label=method)
+        timed = [(p[0], p[2]) for p in pts if isinstance(p[2], (int, float))]
+        if timed:
+            axB.plot([t[0] for t in timed], [t[1] * 1000 for t in timed], marker="s",
+                     linestyle=METHOD_STYLE.get(method, "-"), label=method)
     for ax in (axA, axB):
         ax.set_xscale("log"); ax.set_xlabel("parameters (log)")
     axA.set_ylabel("final test accuracy"); axA.set_title("30.07 — accuracy vs model scale")
-    axB.set_ylabel("ms / step"); axB.set_title("overhead vs model scale")
+    # Per-step times here come from separate training runs on whatever device was
+    # allocated, so they are indicative only; 30.11 (timing.py) is the citable
+    # measurement, taken back-to-back in one process.
+    axB.set_ylabel("ms / step (indicative)"); axB.set_title("step cost vs model scale")
     axA.legend()
-    out = _HERE / "_scale" / "30_07_model_scale.png"
+    out = _HERE / "_scale" / FIGNAME["scale"]
     fig.savefig(out, bbox_inches="tight"); plt.close(fig)
     print(f"wrote {out}")
 
@@ -116,23 +144,45 @@ def plot_gradstats():
         ax.set_title(title); ax.set_xlabel("step")
     axs.flatten()[0].legend(fontsize=8)
     fig.suptitle("30.08 — gradient statistics during training (CIFAR-10)", y=1.0)
-    out = _HERE / "_gradstats" / "30_08_gradstats.png"
+    out = _HERE / "_gradstats" / FIGNAME["gradstats"]
     fig.savefig(out, bbox_inches="tight"); plt.close(fig)
     print(f"wrote {out}")
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", required=True, choices=["lr", "K", "batch", "scale", "gradstats"])
-    args = ap.parse_args()
-    if args.kind in ("lr", "batch"):
-        plot_lr_or_batch(args.kind)
-    elif args.kind == "K":
+KINDS = ["lr", "K", "batch", "scale", "gradstats"]
+
+
+def _plot_one(kind):
+    if kind in ("lr", "batch"):
+        plot_lr_or_batch(kind)
+    elif kind == "K":
         plot_K()
-    elif args.kind == "scale":
+    elif kind == "scale":
         plot_scale()
     else:
         plot_gradstats()
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    # Defaults to every axis: five separate invocations is an easy step to get
+    # half-right, and a missing figure silently leaves a PENDING box in the
+    # chapter rather than failing loudly.
+    ap.add_argument("--kind", nargs="+", default=KINDS, choices=KINDS)
+    args = ap.parse_args()
+    failed = []
+    for kind in args.kind:
+        try:
+            _plot_one(kind)
+        except FileNotFoundError:
+            print(f"!! {kind}: source JSON not found, skipped")
+            failed.append(kind)
+        except Exception as e:
+            print(f"!! {kind}: {type(e).__name__}: {e}")
+            failed.append(kind)
+    done = [k for k in args.kind if k not in failed]
+    print(f"\n{len(done)}/{len(args.kind)} figures written"
+          + (f"; missing: {failed}" if failed else ""))
 
 
 if __name__ == "__main__":
