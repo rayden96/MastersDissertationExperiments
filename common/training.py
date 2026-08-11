@@ -203,12 +203,35 @@ class Trainer:
                           num_workers=self._eff_workers(ds), pin_memory=pin)
 
     # ---- checkpoint / resume -----------------------------------------
+    @staticmethod
+    def _strip_buffers(obj):
+        """Drop BOGrad's FIFO buffer from an optimiser state dict before saving.
+
+        The buffer holds K vectors the size of the full parameter vector, so for
+        a ResNet-18 at K=64 it is roughly 3 GB while the model itself is 45 MB.
+        Checkpointing it every `checkpoint_every_n_steps` writes gigabytes per
+        cell, which exhausted both the Colab disk and Drive mid-campaign.
+
+        It is also the one piece of state not worth persisting: on resume the
+        buffer refills within K steps, a fraction of a percent of a multi-epoch
+        run, so the cost of rebuilding it is negligible against the cost of
+        storing it. Both projection scopes name the entry `buffer` (global scope
+        under global_state, per-tensor under the per-parameter state), so scrub
+        recursively rather than by fixed path.
+        """
+        if isinstance(obj, dict):
+            return {k: ([] if k == "buffer" else Trainer._strip_buffers(v))
+                    for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [Trainer._strip_buffers(v) for v in obj]
+        return obj
+
     def _save_checkpoint(self, tag: str = "last") -> None:
         state = {
             "global_step": self.global_step,
             "epoch": self.start_epoch,
             "model_state": self.model.state_dict(),
-            "optimizer_state": self.optimizer.state_dict(),
+            "optimizer_state": self._strip_buffers(self.optimizer.state_dict()),
             "best_metric": self.best_metric,
             "config_hash": self._cfg_hash,
             "t_offset": self._t_offset + (time.time() - self._t0),
