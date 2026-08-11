@@ -82,8 +82,29 @@ def _train_one(dataset, model_name, model_kwargs, base, method, hp, epochs,
     return res, count_params(model), (meter.logs if meter else [])
 
 
+# COSGD is excluded above this class count, the same protocol rule the bakeoff
+# applies (30_main_comparison/_bakeoff.COSGD_MAX_CLASSES). Its per-class stack is
+# O(C x p), so on CIFAR-100 with a ResNet it exhausts the device: a measured
+# 125.9x step cost and 14.6 GB peak at 100 classes (20.07). Running it here does
+# not produce a scale data point, it produces an OutOfMemoryError.
+COSGD_MAX_CLASSES = 10
+
+_DATASET_CLASSES = {"cifar10": 10, "cifar100": 100}
+
+
 def run_scale(args, device):
+    scale_dir = _HERE / "_scale"
+    out_path = scale_dir / "scale_30_07.json"
+    # Resume: keep whatever a previous (possibly crashed) invocation produced.
     out = {"params": {}, "points": []}
+    if out_path.exists():
+        try:
+            out = storage.read_json(out_path)
+            out.setdefault("params", {}); out.setdefault("points", [])
+        except Exception:
+            pass
+    done = {(p["scale"], p["method"]) for p in out["points"]}
+
     configs = []
     if not args.smoke:
         for w in (0.25, 0.5, 1.0, 2.0):
@@ -95,27 +116,47 @@ def run_scale(args, device):
 
     for dataset, model_name, mk, tag in configs:
         for method in (("baseline", "bograd", "cosgd") if not args.smoke else ("baseline", "bograd")):
+            if method == "cosgd" and _DATASET_CLASSES.get(dataset, 10) > COSGD_MAX_CLASSES:
+                print(f"  {tag:<12} {method:<9} skipped: {_DATASET_CLASSES[dataset]} classes "
+                      f"> {COSGD_MAX_CLASSES} (20.07 scalability wall)", flush=True)
+                continue
+            if (tag, method) in done:
+                print(f"  {tag:<12} {method:<9} skip (already recorded)", flush=True)
+                continue
             hp = {"lr": 0.05 if args.base == "sgd" else 1e-3}
             if method == "bograd":
                 hp.update(K=32, projection_mode="negative")
             if method == "cosgd":
                 hp.update(cosgd_method="modified_gs_negative", combine="mean")
             t0 = time.time()
-            res, nparams, _ = _train_one(dataset, model_name, mk, args.base, method, hp,
-                                         args.epochs or 5, device,
-                                         _HERE / "_scale" / tag / f"{args.base}_{method}",
-                                         args.seeds[0], measure=False)
+            try:
+                res, nparams, _ = _train_one(dataset, model_name, mk, args.base, method, hp,
+                                             args.epochs or 5, device,
+                                             scale_dir / tag / f"{args.base}_{method}",
+                                             args.seeds[0], measure=False)
+            except torch.OutOfMemoryError as e:
+                # Record the failure as data rather than losing the whole sweep:
+                # "this configuration does not fit" is itself a scale result.
+                print(f"  {tag:<12} {method:<9} OOM: {e}"[:200], flush=True)
+                out["points"].append({"scale": tag, "model": model_name, "dataset": dataset,
+                                      "method": method, "oom": True})
+                storage.write_json_atomic(out_path, out)
+                torch.cuda.empty_cache()
+                continue
             out["params"][tag] = nparams
             out["points"].append({"scale": tag, "model": model_name, "dataset": dataset,
                                   "params": nparams, "method": method,
                                   "final_test_acc": res["scalars"]["final_test_acc"],
                                   "sec_per_step": res["scalars"]["mean_step_wall_time_s"]})
+            # Write after EVERY point: this sweep trains for hours and a crash in
+            # the last cell must not discard the ones already paid for.
+            storage.write_json_atomic(out_path, out)
             print(f"  {tag:<12} {method:<9} params={nparams:>9,} "
                   f"acc={res['scalars']['final_test_acc']:.3f} "
                   f"{res['scalars']['mean_step_wall_time_s']*1000:.1f}ms/step "
                   f"({time.time()-t0:.0f}s)", flush=True)
-    storage.write_json_atomic(_HERE / "_scale" / "scale_30_07.json", out)
-    print(f"wrote {_HERE/'_scale'/'scale_30_07.json'}")
+    storage.write_json_atomic(out_path, out)
+    print(f"wrote {out_path} ({len(out['points'])} points)")
 
 
 def run_gradstats(args, device):
