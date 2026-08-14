@@ -201,6 +201,42 @@ def _master_table(master: List[dict], datasets: Sequence[str],
     return "\n".join(out)
 
 
+def _timing_table(rows: List[dict], datasets: Sequence[str]) -> Optional[str]:
+    """30.11 per-step cost: every arm timed back-to-back in one process.
+
+    Reported as the median over `n_timed` steps after a warmup, so these are the
+    citable overhead figures; the per-cell `mean_step_wall_time_s` recorded during
+    training comes from separate sessions on separate devices and is not
+    comparable across arms.
+    """
+    present = [d for d in datasets if any(r.get("dataset") == d for r in rows)]
+    if not present:
+        return None
+    methods = ["cosgd", "bograd", "graddrop", "dropout"]
+    out = [r"\begin{tabular}{ll" + "r" * len(present) + "}", r"\hline",
+           "base & method & " + " & ".join(DS_LABEL.get(d, d) for d in present) + r" \\",
+           r"\hline"]
+    for base in ("sgd", "signsgd", "rmsprop", "adam"):
+        brows = [r for r in rows if r.get("base") == base]
+        if not brows:
+            continue
+        cells = []
+        for m in methods:
+            vals = []
+            for d in present:
+                r = next((x for x in brows
+                          if x.get("method") == m and x.get("dataset") == d), None)
+                ov = r.get("overhead_x") if r else None
+                vals.append(rf"${ov:.2f}\times$" if isinstance(ov, (int, float)) else "--")
+            cells.append((m, vals))
+        for i, (m, vals) in enumerate(cells):
+            lead = BASE_LABEL.get(base, base) if i == 0 else ""
+            out.append(f"{lead} & {m} & " + " & ".join(vals) + r" \\")
+        out.append(r"\hline")
+    out.append(r"\end{tabular}")
+    return "\n".join(out)
+
+
 def _scalability_table(pts: List[dict]) -> Optional[str]:
     if not pts:
         return None
@@ -313,6 +349,24 @@ def build_chapter(which: str, out_dir: Path, datasets: Sequence[str]) -> int:
         else:
             print("  - scalability_real.tex        no timing run yet (PENDING box stays)")
     else:
+        # 30.11 timing: the citable per-step overhead, all arms measured
+        # back-to-back on one device.
+        p = _find("30_main_comparison", "timing", "timing.json")
+        if p is not None:
+            try:
+                td = read_json(p)
+                tex = _timing_table(td.get("rows", []),
+                                    list(datasets) + ["cifar100"])
+            except Exception as e:
+                tex = None
+                print(f"  ! timing.json unreadable: {e}")
+            if tex:
+                (out_dir / "overhead_measured.tex").write_text(tex, encoding="utf-8")
+                print("  + overhead_measured.tex")
+                written += 1
+        else:
+            print("  - overhead_measured.tex      no timing run yet (PENDING box stays)")
+
         # 10.10 already emits a finished tabular; carry it into the chapter so
         # one command fills every table the chapter inputs.
         p = _find("10_bograd_ablation", "10_scale_transfer", "scale_transfer.tex")
