@@ -1,0 +1,76 @@
+{
+  "device": "cuda",
+  "correctness": [
+    {
+      "check": "orthogonal buffer: sequential == batched",
+      "value": 2.384185791015625e-07,
+      "pass": true
+    },
+    {
+      "check": "non-increase, sequential",
+      "value": 0.9990162467636383,
+      "pass": true
+    },
+    {
+      "check": "non-increase, batched+guard",
+      "value": 1.0,
+      "pass": true
+    },
+    {
+      "check": "batched WITHOUT guard lengthens (expected >1)",
+      "value": 1.0408750286326904,
+      "pass": true,
+      "informational": true
+    }
+  ],
+  "cells": [
+    {
+      "dataset": "cifar10",
+      "base": "sgd",
+      "variant": "baseline",
+      "median_step_s": 0.00483669999812264,
+      "peak_mem_mb": 211.93728,
+      "overhead_x": 1.0,
+      "loss_first": 2.301,
+      "loss_last": 2.2565,
+      "acc": 0.1449,
+      "diverged": false
+    },
+    {
+      "dataset": "cifar10",
+      "base": "sgd",
+      "variant": "bograd_sequential",
+      "median_step_s": 0.006693000002996996,
+      "peak_mem_mb": 80.520704,
+      "overhead_x": 1.3837947372371404,
+      "loss_first": 2.3009,
+      "loss_last": 2.2317,
+      "acc": 0.1818,
+      "diverged": false
+    },
+    {
+      "dataset": "cifar10",
+      "base": "sgd",
+      "variant": "bograd_batched",
+      "median_step_s": 0.006498750000901055,
+      "peak_mem_mb": 80.520704,
+      "overhead_x": 1.3436330563035825,
+      "loss_first": 2.3009,
+      "loss_last": 2.214,
+      "acc": 0.1953,
+      "diverged": false
+    },
+    {
+      "dataset": "cifar10",
+      "base": "sgd",
+      "variant": "bograd_batched_bf16",
+      "median_step_s": 0.00651724999625003,
+      "peak_mem_mb": 78.631424,
+      "overhead_x": 1.3474579772943729,
+      "loss_first": 2.3009,
+      "loss_last": 2.214,
+      "acc": 0.1953,
+      "diverged": false
+    }
+  ]
+}
