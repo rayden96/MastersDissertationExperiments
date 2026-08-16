@@ -211,7 +211,7 @@ class COSGD(PerClassGradientOptimizer):
         model=None,
         criterion=None,
         orthogonalization_method: str = "gram_schmidt_normal",
-        step_method: str = "single_forward",
+        step_method: str = "auto",
         class_order: str = "fixed",
         prenormalize: bool = False,
         combine: str = "sum",
