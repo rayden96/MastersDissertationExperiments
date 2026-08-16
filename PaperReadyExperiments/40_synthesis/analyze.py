@@ -65,15 +65,27 @@ def _find_campaign(arg: Optional[str]) -> Optional[Path]:
 
 
 def _load_rows(campaign: Optional[Path]) -> List[Dict[str, Any]]:
+    """Aggregate the per-cell records, exactly as views.py does.
+
+    all_rows.json must NOT be preferred: _bakeoff writes it as a per-session
+    convenience snapshot and each session overwrites it, so on a campaign built
+    across several sessions it holds only the last one. Reading it made this
+    analysis see 20 cells of a 6-dataset campaign. The cell_*.json files never
+    collide, so they are the authoritative source; all_rows.json is kept only as
+    a fallback for a campaign that has no per-cell files.
+    """
     if campaign is None:
         return []
-    allp = campaign / "all_rows.json"
-    if allp.exists():
-        return read_json(allp)
-    rows = []
+    rows: List[Dict[str, Any]] = []
     for c in campaign.rglob("cell_*.json"):
-        rows.extend(read_json(c).get("rows", []))
-    return rows
+        try:
+            rows.extend(read_json(c).get("rows", []))
+        except Exception:
+            pass
+    if rows:
+        return rows
+    allp = campaign / "all_rows.json"
+    return read_json(allp) if allp.exists() else []
 
 
 def _agg_cell(rows):
