@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import json
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -80,7 +80,23 @@ class CurveRecord:
     scalars: Dict[str, Any] = field(default_factory=dict)
 
 
+_AXIS_CACHE: Dict[str, List["CurveRecord"]] = {}
+
+
 def load_axis(root: Path) -> List[CurveRecord]:
+    """Cached wrapper: the results.json files carry the full interference
+    logs and are hundreds of kilobytes each, so a driver that asks for the
+    same directory once per (base, dataset) combination would otherwise
+    re-parse them dozens of times."""
+    key = str(Path(root).resolve())
+    if key not in _AXIS_CACHE:
+        _AXIS_CACHE[key] = _load_axis_uncached(root)
+    # fresh record objects: callers relabel cells in place when splitting a
+    # composite label, and must not write through to the cache
+    return [replace(r) for r in _AXIS_CACHE[key]]
+
+
+def _load_axis_uncached(root: Path) -> List[CurveRecord]:
     """Every completed run beneath `root`, with its per-epoch history.
 
     Runs resumed from a checkpoint carry an empty history (the epoch lists
@@ -104,12 +120,16 @@ def load_axis(root: Path) -> List[CurveRecord]:
         cell = parts[1] if len(parts) >= 3 else r.get("label", rj.parent.name)
         base = cfg.get("base_optimizer", parts[0] if parts else "?")
         seed = int(cfg.get("seed", -1))
-        if (base, cell, seed) in seen:
+        dataset = cfg.get("dataset", "?")
+        # the dataset belongs in the key: an axis directory that holds both
+        # anchors reuses the same (base, cell, seed) for each of them, and
+        # keying without it silently discards the second anchor entirely
+        if (dataset, base, cell, seed) in seen:
             continue
-        seen.add((base, cell, seed))
+        seen.add((dataset, base, cell, seed))
         out.append(CurveRecord(
             base=base, cell=cell, seed=seed,
-            dataset=cfg.get("dataset", "?"),
+            dataset=dataset,
             acc=[float(v) for v in acc], loss=[float(v) for v in loss],
             scalars=r.get("scalars", {})))
     return out
@@ -230,10 +250,18 @@ def plot_grid(cells: Sequence[Tuple[str, Dict[str, Dict[str, List[List[float]]]]
               pretty: Optional[Dict[str, str]] = None,
               baseline_key: str = "baseline",
               band: bool = True,
-              panel: float = 3.4) -> Path:
+              panel: float = 3.4,
+              focus_on_baseline: bool = False) -> Path:
     """A free grid of single-metric panels — used where the axis varies two
     things at once (dataset x base optimiser) and the two-column layout of
-    `plot_axis` would not fit on the page."""
+    `plot_axis` would not fit on the page.
+
+    focus_on_baseline: pin the lower y-limit just below the baseline's own
+    range. On axes where some settings collapse to chance, autoscaling
+    devotes most of the panel to the gap between chance and the trainable
+    band and squashes the comparison that matters; the collapsed cells then
+    run off the bottom, which the caption must say.
+    """
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -255,6 +283,11 @@ def plot_grid(cells: Sequence[Tuple[str, Dict[str, Dict[str, List[List[float]]]]
         ax.set_ylabel("test accuracy" if which == "acc" else "training loss")
         if which == "loss":
             ax.set_yscale("log")
+        elif focus_on_baseline:
+            ref = curves.get(baseline_key, {}).get("acc", [])
+            if ref:
+                lo = float(np.nanmin(curve_stats(ref)[0]))
+                ax.set_ylim(bottom=max(0.0, lo - 0.08))
         if i == 0:
             ax.legend(fontsize=9)
     for j in range(len(cells), nrows * ncols):

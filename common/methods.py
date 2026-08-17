@@ -141,6 +141,7 @@ def build_method(
                 projection_scope=_hp.get("projection_scope", "global"),  # global: faster, >= accuracy (Exp 10.05)
                 projection_strength=_hp.get("projection_strength", 1.0),
                 preserve_magnitude=_hp.get("preserve_magnitude", False),
+                max_rescale=_hp.get("max_rescale", None),
                 random_projection=_hp.get("random_projection", False),
                 min_projection_dim=_hp.get("min_projection_dim", 0),
                 buffer_dtype=_hp.get("buffer_dtype", None),
