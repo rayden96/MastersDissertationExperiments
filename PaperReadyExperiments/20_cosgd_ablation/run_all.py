@@ -30,7 +30,14 @@ AXES = {
     "04": "04_step_method",
     "05": "05_combine",
     "06": "06_base_optimizer",
+    "09": "09_batch_size",
+    "10": "10_learning_rate",
 }
+
+# 04 is an implementation-equivalence check, not a chapter axis; the three
+# per-class strategies compute the same subgradients and differ only in cost,
+# so it is excluded from the default set.
+DEFAULT_AXES = ["01", "02", "03", "05", "06", "09", "10"]
 
 
 def _invoke(folder: str, argv: list[str]) -> None:
@@ -48,7 +55,7 @@ def _invoke(folder: str, argv: list[str]) -> None:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--axes", nargs="+", default=list(AXES.keys()))
+    ap.add_argument("--axes", nargs="+", default=DEFAULT_AXES)
     ap.add_argument("--bases", nargs="+", default=None)
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
     ap.add_argument("--epochs", type=int, default=None,

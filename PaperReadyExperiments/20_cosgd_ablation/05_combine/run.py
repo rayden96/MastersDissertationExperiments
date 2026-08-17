@@ -36,15 +36,20 @@ from _ablation import run_cosgd_sweep  # noqa: E402
 
 PAPER = dict(cosgd_method="gram_schmidt_normal", class_order="desc")
 
+# build_method defaults combine_norm_cap to 2.0, so EVERY cell on this axis
+# must state its cap explicitly. An earlier version of this file left it out
+# of the uncapped cell, which silently gave it the cap and made "sum" and
+# "sum+cap2" the same configuration (bit-identical trajectories).
+
 
 def build_cells(lr):
     return [
         {"label": "baseline", "method": "baseline", "hp": {"lr": lr}},
-        {"label": "sum(paper)", "method": "cosgd", "hp": {**PAPER, "combine": "sum", "lr": lr}},
+        {"label": "sum(paper)", "method": "cosgd", "hp": {**PAPER, "combine": "sum", "combine_norm_cap": 0.0, "lr": lr}},
         {"label": "sum+cap2", "method": "cosgd", "hp": {**PAPER, "combine": "sum", "combine_norm_cap": 2.0, "lr": lr}},
         {"label": "sum+cap3", "method": "cosgd", "hp": {**PAPER, "combine": "sum", "combine_norm_cap": 3.0, "lr": lr}},
-        {"label": "mean", "method": "cosgd", "hp": {**PAPER, "combine": "mean", "lr": lr}},
-        {"label": "freq", "method": "cosgd", "hp": {**PAPER, "combine": "freq", "lr": lr}},
+        {"label": "mean", "method": "cosgd", "hp": {**PAPER, "combine": "mean", "combine_norm_cap": 0.0, "lr": lr}},
+        {"label": "freq", "method": "cosgd", "hp": {**PAPER, "combine": "freq", "combine_norm_cap": 0.0, "lr": lr}},
     ]
 
 

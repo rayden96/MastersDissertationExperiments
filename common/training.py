@@ -444,14 +444,28 @@ class JobManager:
     def run_dir_for(self, cell_key: str) -> Path:
         return self.root / cell_key
 
-    def is_done(self, cell_key: str) -> bool:
+    def is_done(self, cell_key: str, hp: Optional[Dict[str, Any]] = None,
+                **cfg_must_match: Any) -> bool:
+        """True when this cell already has a completed run.
+
+        Pass `hp` (and any other config fields) to guard against reusing a
+        result produced under different settings: a campaign whose cell
+        definitions have changed since the last launch must re-run those
+        cells, not skip them because the label is unchanged.
+        """
         rj = self.run_dir_for(cell_key) / "results.json"
         if not rj.exists():
             return False
         try:
-            return storage.read_json(rj).get("status") == "completed"
+            res = storage.read_json(rj)
         except Exception:
             return False
+        if res.get("status") != "completed":
+            return False
+        cfg = res.get("config", {})
+        if hp is not None and dict(cfg.get("hp") or {}) != dict(hp):
+            return False
+        return all(cfg.get(k) == v for k, v in cfg_must_match.items())
 
 
 __all__ = ["TrainConfig", "Trainer", "JobManager", "evaluate"]

@@ -160,20 +160,28 @@ def run_cosgd_sweep(
         for cell in cells:
             label = cell["label"]
             method = cell.get("method", "cosgd")
+            hp_cell = dict(cell.get("hp", {}))
+            if extra_hp:
+                for k, v in extra_hp.items():
+                    hp_cell.setdefault(k, v)
+            # batch size is a training hyperparameter, not a method knob, so a
+            # cell may override the sweep default without it reaching
+            # build_method(). Recorded on TrainConfig for provenance.
+            cell_bs = int(hp_cell.pop("batch_size", batch_size))
+            lr = hp_cell.get("lr", None)
+
             for seed in seeds:
                 key = f"{base}__{label}__seed{seed}"
                 run_dir = jm.run_dir_for(key)
-                if jm.is_done(key):
+                # hp is part of the identity check: a cell whose definition has
+                # changed since the last launch must re-run, not be skipped
+                # because its label is unchanged.
+                if jm.is_done(key, hp=hp_cell, batch_size=cell_bs, epochs=epochs):
                     res = storage.read_json(run_dir / "results.json")
                     rows.append(_row(base, label, seed, res)); print(f"  skip (done) {key}")
                     continue
 
-                hp = dict(cell.get("hp", {}))
-                if extra_hp:
-                    for k, v in extra_hp.items():
-                        hp.setdefault(k, v)
-                lr = hp.get("lr", None)
-
+                hp = dict(hp_cell)
                 spec = build_method(method, base, hp=hp)
                 # Merge the DATASET's model kwargs (e.g. in_features for MLPs)
                 # with the METHOD's (e.g. dropout_p); method overrides dataset.
@@ -200,7 +208,7 @@ def run_cosgd_sweep(
                     experiment=f"20_cosgd_ablation/{axis_name}",
                     dataset=ds_label, model=model_name, method=method,
                     base_optimizer=base, num_classes=num_classes, epochs=epochs,
-                    batch_size=batch_size, seed=seed, trial_index=0, hp=hp,
+                    batch_size=cell_bs, seed=seed, trial_index=0, hp=hp,
                     model_kwargs=mk, log_every_n_steps=log_every,
                     checkpoint_every_n_steps=1000, num_workers=num_workers,
                 )
