@@ -59,6 +59,10 @@ def main():
                     default=[0.005, 0.01, 0.025, 0.05, 0.1, 0.2])
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--train_subset", type=int, default=None)
+    ap.add_argument("--no_measure", action="store_true",
+                    help="skip the interference meter; this axis is read off "
+                         "the curves, so the meter is optional here and is the "
+                         "bulk of the per-step cost")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
@@ -70,7 +74,8 @@ def main():
                         cells=build_cells(args.lrs),
                         bases=args.bases, dataset=ds, seeds=args.seeds,
                         epochs=args.epochs, out_root=_HERE / "results" / ds,
-                        train_subset=args.train_subset)
+                        train_subset=args.train_subset,
+                        measure=not args.no_measure)
 
 
 if __name__ == "__main__":
