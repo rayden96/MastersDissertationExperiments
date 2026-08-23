@@ -373,7 +373,11 @@ def build_chapter(which: str, out_dir: Path, datasets: Sequence[str]) -> int:
         if p is None:
             p = _HERE / "10_bograd_ablation" / "10_scale_transfer" / "scale_transfer.tex"
         if p.exists():
-            (out_dir / "scale_transfer.tex").write_text(
+            # CIFAR-100 transfer is reported in the experiments chapter, not
+            # the ablation chapter, so this one lands next door.
+            exp_dir = out_dir.parent.parent / "experiments" / "tables"
+            exp_dir.mkdir(parents=True, exist_ok=True)
+            (exp_dir / "scale_transfer.tex").write_text(
                 p.read_text(encoding="utf-8"), encoding="utf-8")
             print("  + scale_transfer.tex")
             written += 1

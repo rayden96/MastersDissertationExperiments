@@ -6,8 +6,8 @@ Aggregator (no training). See README.md. For each base optimiser it reads the
 cell_<base>__bograd.json for the target dataset and computes the Chapter 5
 transfer row: final acc (mean +/- std), epochs-to-target, epoch speed-up and
 wall speed-up (same convention as _summary_utils.speedup_for_run: target =
-baseline mean final accuracy; a curve that never reaches it is charged
-len(curve)+1 epochs).
+TARGET_FRAC x the baseline's mean final accuracy; a curve that never reaches
+it is charged len(curve)+1 epochs).
 
 Run:
     python run.py                     # campaign=main, dataset=cifar100
@@ -31,7 +31,7 @@ for p in (str(_REPO), str(_PRE)):
         sys.path.insert(0, p)
 
 from common.storage import read_json, write_json_atomic, get_results_root  # noqa: E402
-from _summary_utils import epochs_to_target  # noqa: E402
+from _summary_utils import epochs_to_target, TARGET_FRAC  # noqa: E402
 
 BASES = ["sgd", "signsgd", "rmsprop", "adam"]
 
@@ -86,7 +86,11 @@ def build(campaign: str, dataset: str) -> Dict[str, Any]:
         if b_fm is None or not b_curves or not m_curves:
             print(f"  [{base}] incomplete rows; skipped", flush=True)
             continue
-        tgt = b_fm
+        # TARGET_FRAC, not the baseline's mean exactly: an exact-match
+        # target is unreachable for about half the baseline's own seeds,
+        # which charges them the full budget and inflates every speed-up
+        # measured against them (see Section 6.2.2).
+        tgt = b_fm * TARGET_FRAC
         b_ep = float(np.mean([epochs_to_target(c, tgt) or (len(c) + 1) for c in b_curves]))
         m_ep = float(np.mean([epochs_to_target(c, tgt) or (len(c) + 1) for c in m_curves]))
         sp = (b_ep / m_ep) if m_ep > 0 else None

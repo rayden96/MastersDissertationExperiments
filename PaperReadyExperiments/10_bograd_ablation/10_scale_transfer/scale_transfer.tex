@@ -1,0 +1,10 @@
+\begin{tabular}{l r r r r r r}
+\hline
+\textbf{Base} & \textbf{Baseline acc} & \textbf{BOGrad acc} & \textbf{Epoch speed-up} & \textbf{Wall speed-up} & \textbf{Overhead (\%)} & \textbf{Tuned $K$} \\
+\hline
+sgd & $0.656 \pm 0.010$ & $0.648 \pm 0.004$ & 1.08$\times$ & 0.37$\times$ & +196.2 & 16 \\
+signsgd & $0.641 \pm 0.013$ & $0.638 \pm 0.009$ & 1.30$\times$ & 0.64$\times$ & +104.1 & 64 \\
+rmsprop & $0.618 \pm 0.012$ & $0.647 \pm 0.003$ & 1.37$\times$ & 0.97$\times$ & +41.6 & 64 \\
+adam & $0.657 \pm 0.004$ & $0.661 \pm 0.001$ & 1.17$\times$ & 0.62$\times$ & +89.1 & 128 \\
+\hline
+\end{tabular}

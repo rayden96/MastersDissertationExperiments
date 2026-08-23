@@ -1,0 +1,67 @@
+{
+  "campaign": "main",
+  "dataset": "cifar100",
+  "rows": [
+    {
+      "base": "sgd",
+      "baseline_acc": 0.6557,
+      "baseline_acc_std": 0.0101,
+      "bograd_acc": 0.6484,
+      "bograd_acc_std": 0.0042,
+      "delta_acc": -0.0073,
+      "baseline_epochs": 26.0,
+      "bograd_epochs": 24.0,
+      "epoch_speedup": 1.083,
+      "wall_speedup": 0.366,
+      "step_overhead_pct": 196.2,
+      "tuned_K": 16,
+      "tuned_lr": 0.02
+    },
+    {
+      "base": "signsgd",
+      "baseline_acc": 0.641,
+      "baseline_acc_std": 0.0135,
+      "bograd_acc": 0.6379,
+      "bograd_acc_std": 0.0085,
+      "delta_acc": -0.0031,
+      "baseline_epochs": 40.0,
+      "bograd_epochs": 30.67,
+      "epoch_speedup": 1.304,
+      "wall_speedup": 0.639,
+      "step_overhead_pct": 104.1,
+      "tuned_K": 64,
+      "tuned_lr": 0.0003
+    },
+    {
+      "base": "rmsprop",
+      "baseline_acc": 0.6177,
+      "baseline_acc_std": 0.0116,
+      "bograd_acc": 0.6472,
+      "bograd_acc_std": 0.0025,
+      "delta_acc": 0.0295,
+      "baseline_epochs": 23.33,
+      "bograd_epochs": 17.0,
+      "epoch_speedup": 1.373,
+      "wall_speedup": 0.969,
+      "step_overhead_pct": 41.6,
+      "tuned_K": 64,
+      "tuned_lr": 0.0003
+    },
+    {
+      "base": "adam",
+      "baseline_acc": 0.6569,
+      "baseline_acc_std": 0.0045,
+      "bograd_acc": 0.6614,
+      "bograd_acc_std": 0.0013,
+      "delta_acc": 0.0045,
+      "baseline_epochs": 29.67,
+      "bograd_epochs": 25.33,
+      "epoch_speedup": 1.171,
+      "wall_speedup": 0.619,
+      "step_overhead_pct": 89.1,
+      "tuned_K": 128,
+      "tuned_lr": 0.0003
+    }
+  ],
+  "n": 4
+}
