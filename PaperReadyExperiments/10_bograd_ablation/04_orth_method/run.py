@@ -41,10 +41,18 @@ def build_cells(K):
              # production reference: sequential + negative
              {"label": "sequential_negative", "method": "bograd",
               "hp": {"K": K, "orth_method": "sequential", "projection_mode": "negative"}}]
-    # true-projector comparison under full mode
+    # Complete the method-by-mode factorial. The first campaign ran the exact
+    # projectors under full mode only, which confounded the method with the
+    # mode: every full-mode cell fails, so "sequential beats the exact
+    # projector" could not be separated from "negative beats full". The
+    # negative-mode exact cells are what break the tie.
     for om in ("sequential", "qr", "householder"):
-        cells.append({"label": f"{om}_full", "method": "bograd",
-                      "hp": {"K": K, "orth_method": om, "projection_mode": "full"}})
+        for mode in ("full", "negative"):
+            if om == "sequential" and mode == "negative":
+                continue                      # already present as the reference
+            cells.append({"label": f"{om}_{mode}", "method": "bograd",
+                          "hp": {"K": K, "orth_method": om,
+                                 "projection_mode": mode}})
     return cells
 
 

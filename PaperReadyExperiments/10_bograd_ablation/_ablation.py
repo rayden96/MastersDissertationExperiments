@@ -161,21 +161,27 @@ def run_bograd_sweep(
         for cell in cells:
             label = cell["label"]
             method = cell.get("method", "bograd")
+            hp_cell = dict(cell.get("hp", {}))
+            if extra_hp:
+                for k, v in extra_hp.items():
+                    hp_cell.setdefault(k, v)
+            lr = hp_cell.get("lr", None)
+
             for seed in seeds:
                 key = _cell_key(base, label, seed)
                 run_dir = jm.run_dir_for(key)
-                if jm.is_done(key):
+                # hp is part of the identity check: a cell whose definition has
+                # changed since the last launch must re-run, not be skipped
+                # because its label is unchanged. Note this cannot catch a
+                # change in what the CODE does with an unchanged hp; use
+                # prune_no_history.py or delete the cell directory for that.
+                if jm.is_done(key, hp=hp_cell, epochs=epochs):
                     res = storage.read_json(run_dir / "results.json")
                     rows.append(_row_from_result(base, label, seed, res))
                     print(f"  skip (done) {key}")
                     continue
 
-                hp = dict(cell.get("hp", {}))
-                if extra_hp:
-                    for k, v in extra_hp.items():
-                        hp.setdefault(k, v)
-                lr = hp.get("lr", None)
-
+                hp = dict(hp_cell)
                 spec = build_method(method, base, hp=hp)
                 # Merge the DATASET's model kwargs (e.g. in_features for MLPs,
                 # vocab_size for text) with the METHOD's (e.g. dropout_p); method
