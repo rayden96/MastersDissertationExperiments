@@ -1,0 +1,42 @@
+{
+  "per_method": {
+    "cosgd": {
+      "dx": [],
+      "dy": []
+    },
+    "bograd": {
+      "dx": [],
+      "dy": []
+    },
+    "graddrop": {
+      "dx": [],
+      "dy": []
+    }
+  },
+  "fits": {
+    "cosgd": {
+      "slope": NaN,
+      "intercept": NaN,
+      "r": NaN,
+      "n": 0
+    },
+    "bograd": {
+      "slope": NaN,
+      "intercept": NaN,
+      "r": NaN,
+      "n": 0
+    },
+    "graddrop": {
+      "slope": NaN,
+      "intercept": NaN,
+      "r": NaN,
+      "n": 0
+    },
+    "pooled": {
+      "slope": NaN,
+      "intercept": NaN,
+      "r": NaN,
+      "n": 0
+    }
+  }
+}

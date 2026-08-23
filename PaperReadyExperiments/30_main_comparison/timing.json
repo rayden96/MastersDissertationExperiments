@@ -1,0 +1,82 @@
+{
+  "device": "cuda",
+  "gpu": "NVIDIA GeForce RTX 3050 Laptop GPU",
+  "n_steps": 8,
+  "warmup": 3,
+  "rows": [
+    {
+      "base": "sgd",
+      "method": "baseline",
+      "hp": {
+        "lr": 0.05
+      },
+      "n_timed": 8,
+      "median_step_s": 0.005427149997558445,
+      "mean_step_s": 0.00541581249126466,
+      "peak_mem_mb": 212.461568,
+      "dataset": "cifar10",
+      "overhead_x": 1.0
+    },
+    {
+      "base": "sgd",
+      "method": "cosgd",
+      "hp": {
+        "lr": 0.05,
+        "cosgd_method": "gram_schmidt_normal",
+        "class_order": "desc",
+        "combine": "sum",
+        "combine_norm_cap": 2.0
+      },
+      "n_timed": 8,
+      "median_step_s": 0.05133285000920296,
+      "mean_step_s": 0.05200384999625385,
+      "peak_mem_mb": 106.070016,
+      "dataset": "cifar10",
+      "overhead_x": 9.458527962613246
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 16
+      },
+      "n_timed": 8,
+      "median_step_s": 0.007431500009261072,
+      "mean_step_s": 0.00758585000585299,
+      "peak_mem_mb": 81.65376,
+      "dataset": "cifar10",
+      "overhead_x": 1.3693190740267618
+    },
+    {
+      "base": "sgd",
+      "method": "graddrop",
+      "hp": {
+        "lr": 0.05,
+        "leak": 0.0
+      },
+      "n_timed": 8,
+      "median_step_s": 0.05006875001708977,
+      "mean_step_s": 0.05029671250667889,
+      "peak_mem_mb": 106.070016,
+      "dataset": "cifar10",
+      "overhead_x": 9.225606448986042
+    },
+    {
+      "base": "sgd",
+      "method": "dropout",
+      "hp": {
+        "lr": 0.05,
+        "dropout_p": 0.1
+      },
+      "n_timed": 8,
+      "median_step_s": 0.005470649979542941,
+      "mean_step_s": 0.005615374997432809,
+      "peak_mem_mb": 77.87008,
+      "dataset": "cifar10",
+      "overhead_x": 1.0080152533104974
+    }
+  ]
+}
