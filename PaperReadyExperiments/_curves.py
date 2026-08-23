@@ -304,3 +304,55 @@ def plot_grid(cells: Sequence[Tuple[str, Dict[str, Dict[str, List[List[float]]]]
 
 __all__ = ["CurveRecord", "load_axis", "group", "final_means", "curve_stats",
            "plot_axis", "plot_grid", "BASELINE_STYLE", "CELL_COLOURS"]
+
+
+# ---------------------------------------------------------------------------
+# Speed, not height
+# ---------------------------------------------------------------------------
+def epochs_to_target(curve: Sequence[float], target: float) -> Optional[int]:
+    """First 1-based epoch at which `curve` reaches `target`, else None."""
+    for i, v in enumerate(curve):
+        if v is not None and v == v and v >= target:
+            return i + 1
+    return None
+
+
+def speed_table(curves: Dict[str, Dict[str, List[List[float]]]],
+                baseline_key: str = "baseline",
+                target_frac: float = 0.99) -> Dict[str, Dict[str, float]]:
+    """Epochs-to-target and speed-up for every cell on one axis panel.
+
+    The target is `target_frac` x the reference cell's mean final accuracy,
+    matching the convention of Chapter 6 (an exact-match target is
+    unreachable for about half the reference's own seeds and so inflates its
+    own cost). A seed that never reaches the target is charged the budget
+    plus one. Speed-up above one means the cell gets there in fewer epochs.
+
+    This is the quantity the ablation chapters actually care about: two cells
+    that finish within noise of each other are not the same result if one
+    took half as long to get there.
+    """
+    ref = curves.get(baseline_key, {}).get("acc", [])
+    if not ref:
+        return {}
+    ref_final = float(np.mean([c[-1] for c in ref if c]))
+    target = ref_final * target_frac
+
+    def cost(seed_curves):
+        vals = [epochs_to_target(c, target) or (len(c) + 1) for c in seed_curves if c]
+        return float(np.mean(vals)) if vals else float("nan")
+
+    ref_ep = cost(ref)
+    out = {}
+    for cell, d in curves.items():
+        seeds = d.get("acc", [])
+        if not seeds:
+            continue
+        ep = cost(seeds)
+        reached = sum(1 for c in seeds if epochs_to_target(c, target) is not None)
+        out[cell] = {"epochs": ep,
+                     "speedup": (ref_ep / ep) if ep and ep == ep else float("nan"),
+                     "reached": reached, "n": len(seeds),
+                     "final": float(np.mean([c[-1] for c in seeds if c]))}
+    out["__target__"] = {"value": target, "ref_final": ref_final, "ref_epochs": ref_ep}
+    return out
