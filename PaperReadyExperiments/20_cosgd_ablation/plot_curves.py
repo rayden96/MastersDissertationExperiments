@@ -47,11 +47,9 @@ AXES: Dict[str, dict] = {
         order=["baseline", "sum(paper)", "sum+cap2", "sum+cap3", "mean", "freq"],
         pretty={"sum(paper)": "sum (uncapped)", "sum+cap2": r"sum, cap $\kappa=2$",
                 "sum+cap3": r"sum, cap $\kappa=3$", "mean": "mean", "freq": "frequency"},
-        # The first campaign's uncapped cell did not set combine_norm_cap, so it
-        # inherited the default of 2.0 and is a duplicate of sum+cap2 rather than
-        # an uncapped run. Excluded until 05_combine is re-run with the cap
-        # stated explicitly; see 05_combine/run.py.
-        exclude=["sum(paper)"],
+        # The uncapped cell is genuine as of the 2026-08-23 re-run: the first
+        # campaign left combine_norm_cap unset, so it inherited the default of
+        # 2.0 and duplicated sum+cap2. See 05_combine/run.py.
     ),
     "gs_variant": dict(
         stem="20_01_gs_variant", fig="ax_gs_variant",
@@ -103,11 +101,18 @@ def _axis_dirs(stem: str, dataset: str) -> List[Path]:
 
 
 def _sorted_numeric(keys, prefix: str) -> List[str]:
-    """Order cells like 'bs64','bs128' numerically, baseline first."""
+    """Order cells like 'bs64','bs128','lr0p005' numerically, baseline first.
+
+    The learning-rate labels encode the decimal point as 'p' and a minus as
+    'm' (a dot is not safe in a directory name), so both have to be decoded
+    before parsing or every rate below one collapses to the same key and the
+    panels come out shuffled.
+    """
     def k(s):
-        digits = "".join(ch for ch in s if ch.isdigit() or ch == ".")
+        body = s.lstrip("abcdefghijklmnopqrstuvwxyz_")
+        body = body.replace("p", ".").replace("m", "-")
         try:
-            return float(digits)
+            return float(body)
         except ValueError:
             return float("inf")
     rest = sorted([x for x in keys if x != "baseline"], key=k)
