@@ -50,6 +50,12 @@ AXES: Dict[str, dict] = {
         # The uncapped cell is genuine as of the 2026-08-23 re-run: the first
         # campaign left combine_norm_cap unset, so it inherited the default of
         # 2.0 and duplicated sum+cap2. See 05_combine/run.py.
+        #
+        # Six lines is too many for a panel this size, and the axis contains
+        # two separable questions: what the cap does to a summed step, and
+        # what happens when the step is averaged back down instead.
+        subsets=[("summed", ["baseline", "sum(paper)", "sum+cap2", "sum+cap3"]),
+                 ("averaged", ["baseline", "mean", "freq"])],
     ),
     "gs_variant": dict(
         stem="20_01_gs_variant", fig="ax_gs_variant",
@@ -142,7 +148,16 @@ def do_axis(key: str, outdir: Path, quiet: bool = False) -> Optional[dict]:
     if not order:                                    # numeric sweeps (bs, lr)
         keys = {k for _, c in panels for k in c}
         order = _sorted_numeric(keys, key)
-    plot_axis(panels, outdir / spec["fig"], order=order, pretty=spec["pretty"])
+
+    # One figure per subset. A panel carrying more than four or five lines is
+    # unreadable once scaled to the text width, so axes that sweep many cells
+    # are split into figures that each answer one question.
+    for suffix, sub_order in (spec.get("subsets") or [("", order)]):
+        keep = set(sub_order)
+        sub = [(title, {k: v for k, v in curves.items() if k in keep})
+               for title, curves in panels]
+        stem = spec["fig"] + (f"_{suffix}" if suffix else "")
+        plot_axis(sub, outdir / stem, order=sub_order, pretty=spec["pretty"])
     return stats
 
 
@@ -151,6 +166,7 @@ def do_hyper_axis(key: str, outdir: Path) -> Optional[dict]:
     value, rows are the anchors, and each panel holds the matched pair."""
     spec = HYPER_AXES[key]
     cells, stats = [], {}
+    by_anchor: Dict[str, list] = {ds: [] for ds in ANCHORS}
     for ds in ANCHORS:
         recs = []
         for d in _axis_dirs(spec["stem"], ds):
@@ -169,13 +185,19 @@ def do_hyper_axis(key: str, outdir: Path) -> Optional[dict]:
             if value == "baseline" or value not in by_value:
                 continue
             title = f"{ANCHOR_TITLE.get(ds, ds).split(' (')[0]} — {spec['label'](value)}"
-            cells.append((title, group(by_value[value])))
+            panel = (title, group(by_value[value]))
+            cells.append(panel)
+            by_anchor[ds].append(panel)
     if not cells:
         print(f"  {key}: no results — skipped")
         return None
-    ncols = max(1, len(cells) // max(1, len(stats)))
-    plot_grid(cells, outdir / spec["fig"], ncols=ncols, which="acc",
-              order=["baseline", "cosgd"], pretty={"cosgd": "COSGD"})
+    # One figure per anchor: a single grid holding both would be twelve panels
+    # wide and unreadable at text width.
+    for ds, panels in by_anchor.items():
+        if not panels:
+            continue
+        plot_grid(panels, outdir / f"{spec['fig']}_{ds}", ncols=3, which="acc",
+                  order=["baseline", "cosgd"], pretty={"cosgd": "COSGD"})
     return stats
 
 

@@ -48,13 +48,15 @@ def _K_pretty(label: str) -> str:
 AXES: Dict[str, dict] = {
     "buffer_K": dict(
         stem="10_01_buffer_K", fig="ax_buffer_K",
-        # nine buffer sizes is too many lines for a panel this size; the
-        # subset spans the range at every doubling of the exponent.
-        keep=["baseline_K0", "K1", "K4", "K16", "K64", "K128"],
-        order=["baseline_K0", "K1", "K4", "K16", "K64", "K128"],
-        pretty={"baseline_K0": "baseline", "K1": "$K = 1$", "K4": "$K = 4$",
-                "K16": "$K = 16$", "K64": "$K = 64$", "K128": "$K = 128$"},
+        pretty={"baseline_K0": "baseline", "K1": "$K = 1$", "K2": "$K = 2$",
+                "K4": "$K = 4$", "K8": "$K = 8$", "K16": "$K = 16$",
+                "K32": "$K = 32$", "K64": "$K = 64$", "K128": "$K = 128$"},
         baseline="baseline_K0",
+        # Nine buffer sizes on one panel is unreadable at this size. Split the
+        # sweep at the middle of the range: the short buffers show benefit
+        # appearing, the long ones show it turning over.
+        subsets=[("short", ["baseline_K0", "K1", "K2", "K4", "K8"]),
+                 ("long",  ["baseline_K0", "K16", "K32", "K64", "K128"])],
     ),
     "mode": dict(
         stem="10_03_projection_mode", fig="ax_mode",
@@ -69,14 +71,30 @@ AXES: Dict[str, dict] = {
         # cell; autoscaling to include them squashes the band where the
         # remaining five settings actually differ.
         focus=True,
+        # Two different questions live on this axis. Which components to
+        # remove is a categorical comparison against two settings that do not
+        # train; how completely to remove them is a continuum. They read far
+        # better apart.
+        subsets=[("which", ["baseline", "mode_negative", "mode_full",
+                            "mode_positive"]),
+                 ("strength", ["baseline", "neg_alpha0.25", "neg_alpha0.5",
+                               "neg_alpha0.75", "mode_negative"])],
     ),
     "orth": dict(
         stem="10_04_orth_method", fig="ax_orth",
         order=["baseline", "sequential_negative", "sequential_full",
                "qr_full", "householder_full"],
-        pretty={"sequential_negative": "sequential, negative",
-                "sequential_full": "sequential, full",
-                "qr_full": "QR (exact)", "householder_full": "Householder (exact)"},
+        pretty={"sequential_negative": "sequential", "sequential_full": "sequential",
+                "qr_negative": "QR (exact)", "qr_full": "QR (exact)",
+                "householder_negative": "Householder (exact)",
+                "householder_full": "Householder (exact)"},
+        # The argument is that the method is irrelevant at matched mode and
+        # the mode is everything. One figure per mode says that directly;
+        # putting all six on one panel says it far less clearly.
+        subsets=[("negative", ["baseline", "sequential_negative", "qr_negative",
+                               "householder_negative"]),
+                 ("full", ["baseline", "sequential_full", "qr_full",
+                           "householder_full"])],
     ),
     "scope": dict(
         stem="10_05_projection_scope", fig="ax_scope",
@@ -147,12 +165,21 @@ def do_axis(key: str, outdir: Path) -> Optional[dict]:
         print(f"  {key}: no results under {_results_root()} — skipped")
         return None
 
-    kw = dict(order=spec["order"], pretty=spec["pretty"],
-              baseline_key=spec.get("baseline", "baseline"))
-    plot_grid(cells, outdir / spec["fig"], ncols=len(bases), which="acc",
-              focus_on_baseline=spec.get("focus", False), **kw)
-    plot_grid(cells, outdir / (spec["fig"] + "_loss"), ncols=len(bases),
-              which="loss", **kw)
+    bl = spec.get("baseline", "baseline")
+    # Each subset becomes its own figure. A panel carrying more than four or
+    # five lines is unreadable once the grid is scaled to the text width, and
+    # the subsets are chosen so that each figure answers one question.
+    subsets = spec.get("subsets") or [("", spec.get("order") or [])]
+    for suffix, order in subsets:
+        keep = set(order) if order else None
+        sub = [(title, {k: v for k, v in curves.items() if not keep or k in keep})
+               for title, curves in cells]
+        stem = spec["fig"] + (f"_{suffix}" if suffix else "")
+        kw = dict(order=order or None, pretty=spec["pretty"], baseline_key=bl)
+        plot_grid(sub, outdir / stem, ncols=len(bases), which="acc",
+                  focus_on_baseline=spec.get("focus", False), **kw)
+        plot_grid(sub, outdir / (stem + "_loss"), ncols=len(bases),
+                  which="loss", **kw)
     return stats
 
 
