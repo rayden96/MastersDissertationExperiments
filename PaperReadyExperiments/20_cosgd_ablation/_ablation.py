@@ -92,6 +92,13 @@ def run_cosgd_sweep(
     subclasses: if set, use the synthetic CIFAR-10 N-subclass relabelling
            (20.07 scalability); overrides `dataset`.
     """
+    # The interference meter is the bulk of the per-step cost and most axes are
+    # read off the curves rather than off the index. One env var turns it off
+    # for a whole session without touching every axis's CLI.
+    import os as _os
+    if _os.environ.get("COSGD_NO_MEASURE") == "1":
+        measure = False
+
     device = _device()
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True
