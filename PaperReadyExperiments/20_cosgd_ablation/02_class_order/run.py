@@ -30,7 +30,7 @@ from _ablation import run_cosgd_sweep  # noqa: E402
 
 
 # Reclaimed FOLD held fixed (sum+cap, full classical GS); only class_order varies.
-RECLAIM = dict(cosgd_method="gram_schmidt_normal", combine="sum", combine_norm_cap=2.0)
+RECLAIM = dict(cosgd_method="gram_schmidt_normal", combine="sum", combine_norm_cap=0.0)
 
 
 def build_cells():

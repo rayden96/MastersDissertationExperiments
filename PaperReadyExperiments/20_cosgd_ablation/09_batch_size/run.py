@@ -32,7 +32,7 @@ from _ablation import run_cosgd_sweep  # noqa: E402
 
 # Canonical configuration; only the batch size moves.
 CANONICAL = dict(cosgd_method="gram_schmidt_normal", class_order="desc",
-                 combine="sum", combine_norm_cap=2.0)
+                 combine="sum", combine_norm_cap=0.0)
 
 
 def build_cells(batch_sizes, lr):

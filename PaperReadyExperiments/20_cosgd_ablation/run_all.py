@@ -32,12 +32,14 @@ AXES = {
     "06": "06_base_optimizer",
     "09": "09_batch_size",
     "10": "10_learning_rate",
+    "11": "11_orth_strength",
+    "12": "12_preserve_magnitude",
 }
 
 # 04 is an implementation-equivalence check, not a chapter axis; the three
 # per-class strategies compute the same subgradients and differ only in cost,
 # so it is excluded from the default set.
-DEFAULT_AXES = ["01", "02", "03", "05", "06", "09", "10"]
+DEFAULT_AXES = ["01", "02", "03", "05", "06", "09", "10", "11", "12"]
 
 
 def _invoke(folder: str, argv: list[str]) -> None:

@@ -44,18 +44,8 @@ BASES = ["sgd", "adam", "rmsprop", "signsgd"]
 AXES: Dict[str, dict] = {
     "combine": dict(
         stem="20_05_combine", fig="ax_combine",
-        order=["baseline", "sum(paper)", "sum+cap2", "sum+cap3", "mean", "freq"],
-        pretty={"sum(paper)": "sum (uncapped)", "sum+cap2": r"sum, cap $\kappa=2$",
-                "sum+cap3": r"sum, cap $\kappa=3$", "mean": "mean", "freq": "frequency"},
-        # The uncapped cell is genuine as of the 2026-08-23 re-run: the first
-        # campaign left combine_norm_cap unset, so it inherited the default of
-        # 2.0 and duplicated sum+cap2. See 05_combine/run.py.
-        #
-        # Six lines is too many for a panel this size, and the axis contains
-        # two separable questions: what the cap does to a summed step, and
-        # what happens when the step is averaged back down instead.
-        subsets=[("summed", ["baseline", "sum(paper)", "sum+cap2", "sum+cap3"]),
-                 ("averaged", ["baseline", "mean", "freq"])],
+        order=["baseline", "sum", "mean", "freq"],
+        pretty={"sum": "sum", "mean": "mean", "freq": "frequency"},
     ),
     "gs_variant": dict(
         stem="20_01_gs_variant", fig="ax_gs_variant",
@@ -76,6 +66,17 @@ AXES: Dict[str, dict] = {
         stem="20_03_prenormalize", fig="ax_prenorm",
         order=["baseline", "prenorm0", "prenorm1"],
         pretty={"prenorm0": "pre-normalisation off", "prenorm1": "pre-normalisation on"},
+    ),
+    "orth_strength": dict(
+        stem="20_11_orth_strength", fig="ax_orth_strength",
+        order=["baseline", "orth0p25", "orth0p5", "orth0p75", "orth1"],
+        pretty={"orth0p25": r"$\alpha = 0.25$", "orth0p5": r"$\alpha = 0.5$",
+                "orth0p75": r"$\alpha = 0.75$", "orth1": r"$\alpha = 1$ (full)"},
+    ),
+    "preserve_magnitude": dict(
+        stem="20_12_preserve_magnitude", fig="ax_preserve_magnitude",
+        order=["baseline", "preserve0", "preserve1"],
+        pretty={"preserve0": "magnitude free", "preserve1": "magnitude preserved"},
     ),
 }
 

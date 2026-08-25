@@ -151,15 +151,11 @@ def build_method(
         return MethodSpec(method, base, "standard", factory, {}, label, hp)
 
     # --- cosgd (per-class Gram-Schmidt) ---------------------------------
-    # Canonical defaults = the "RECLAIMED COSGD" from the scrutiny + paper
-    # reproduction (PreDiscovery/research/03_cosgd_scrutiny/FINDINGS.md): the
-    # CONFERENCE-PAPER algorithm — full classical Gram-Schmidt, descending-
-    # magnitude sort, combine="sum" — PLUS a single safety addition,
-    # combine_norm_cap=2.0, which preserves sum's big-step low-dim speedup
-    # (iris 5.6x, wine 3.0x) while preventing the high-dim divergence the raw
-    # paper version suffers (digits: 0.84 BROKEN -> 2.25x with the cap).
-    # The earlier CIFAR-tuned defaults (freq+preserve+conflict_gate) were
-    # REVERTED — they destroyed COSGD's intended low-dim advantage.
+    # Canonical configuration: full classical Gram-Schmidt, descending-magnitude
+    # order, combine="sum", no norm cap. The cap was retired once the
+    # learning-rate axis showed that COSGD's usable band sits an order of
+    # magnitude below the baseline's: the cap was compensating for a rate
+    # chosen for the baseline, and the rate is the honest place to fix that.
     if method == "cosgd":
         def factory(model, criterion, _cls=base_cls, _kw=base_kwargs, _hp=hp):
             return COSGD(
@@ -167,14 +163,22 @@ def build_method(
                 base_optimizer_cls=_cls,
                 model=model, criterion=criterion,
                 orthogonalization_method=_hp.get("cosgd_method", "gram_schmidt_normal"),
-                step_method=_hp.get("step_method", "single_forward"),
+                # "auto" picks the separate-forward path on models without
+                # batch normalisation, which costs about two thirds of the
+                # shared-forward one for identical subgradients. The previous
+                # hard-coded "single_forward" charged every COSGD run, and
+                # every cost figure derived from them, the expensive path.
+                step_method=_hp.get("step_method", "auto"),
                 class_order=_hp.get("class_order", "desc"),
                 prenormalize=_hp.get("prenormalize", False),
                 combine=_hp.get("combine", "sum"),
-                combine_norm_cap=_hp.get("combine_norm_cap", 2.0),
+                # The norm cap is retired: it compensated for a learning rate
+                # chosen for the baseline rather than for this method, and the
+                # learning rate is the honest place to fix that.
+                combine_norm_cap=_hp.get("combine_norm_cap", 0.0),
+                orth_strength=_hp.get("orth_strength", 1.0),
                 preserve_magnitude=_hp.get("preserve_magnitude", False),
-                conflict_gate=_hp.get("conflict_gate", False),
-                conflict_threshold=_hp.get("conflict_threshold", 0.1),
+                max_rescale=_hp.get("max_rescale", 10.0),
                 collect_timing=_hp.get("collect_timing", False),
                 **_kw,
             )
@@ -187,7 +191,7 @@ def build_method(
                 model.parameters(),
                 base_optimizer_cls=_cls,
                 model=model, criterion=criterion,
-                step_method=_hp.get("step_method", "single_forward"),
+                step_method=_hp.get("step_method", "auto"),
                 leak=_hp.get("leak", 0.0),
                 collect_timing=_hp.get("collect_timing", False),
                 **_kw,

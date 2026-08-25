@@ -35,7 +35,7 @@ def build_cells():
         {"label": "baseline", "method": "baseline", "hp": {}},
         {"label": "cosgd", "method": "cosgd",
          "hp": {"cosgd_method": "gram_schmidt_normal", "class_order": "desc",
-                "combine": "sum", "combine_norm_cap": 2.0}},
+                "combine": "sum", "combine_norm_cap": 0.0}},
     ]
 
 

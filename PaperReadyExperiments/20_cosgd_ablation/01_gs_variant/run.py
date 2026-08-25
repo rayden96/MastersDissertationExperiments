@@ -34,7 +34,7 @@ VARIANTS = ["gram_schmidt_normal", "gram_schmidt_negative",
 
 # Hold the reclaimed FOLD fixed (sum+cap+desc) so this axis isolates the GS
 # variant only, not a confound with the combine rule.
-RECLAIM = dict(class_order="desc", combine="sum", combine_norm_cap=2.0)
+RECLAIM = dict(class_order="desc", combine="sum", combine_norm_cap=0.0)
 
 
 def build_cells():
