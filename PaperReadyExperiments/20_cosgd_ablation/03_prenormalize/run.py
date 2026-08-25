@@ -37,11 +37,11 @@ RECLAIM = dict(cosgd_method="gram_schmidt_normal", class_order="desc",
                combine="sum", combine_norm_cap=0.0)
 
 
-def build_cells():
-    cells = [{"label": "baseline", "method": "baseline", "hp": {}}]
+def build_cells(lr):
+    cells = [{"label": "baseline", "method": "baseline", "hp": {"lr": lr}}]
     for pn in (False, True):
         cells.append({"label": f"prenorm{int(pn)}", "method": "cosgd",
-                      "hp": {**RECLAIM, "prenormalize": pn}})
+                      "hp": {**RECLAIM, "prenormalize": pn, "lr": lr}})
     return cells
 
 
@@ -50,6 +50,8 @@ def main():
     ap.add_argument("--bases", nargs="+", default=["sgd"])
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
     ap.add_argument("--datasets", nargs="+", default=["iris", "wine", "breast_cancer", "digits"])
+    ap.add_argument("--lr", type=float, required=True,
+                    help="the rate this method operates at; see axis 20.10")
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--train_subset", type=int, default=None)
     ap.add_argument("--smoke", action="store_true")
@@ -57,7 +59,7 @@ def main():
     if args.smoke:
         args.bases = ["sgd"]; args.seeds = [2026]; args.epochs = 5; args.datasets = ["iris"]
     for ds in args.datasets:
-        run_cosgd_sweep(axis_name=f"20_03_prenormalize_{ds}", cells=build_cells(),
+        run_cosgd_sweep(axis_name=f"20_03_prenormalize_{ds}", cells=build_cells(args.lr),
                         bases=args.bases, dataset=ds, seeds=args.seeds,
                         epochs=args.epochs, out_root=_HERE / "results" / ds,
                         train_subset=args.train_subset)
