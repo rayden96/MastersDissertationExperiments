@@ -41,6 +41,12 @@ AXES = {
 # so it is excluded from the default set.
 DEFAULT_AXES = ["01", "02", "03", "05", "06", "09", "10", "11", "12"]
 
+# Axis 10 sweeps the learning rate itself, so it takes no rate from the caller.
+# Axis 06 varies the base optimiser, and only its SGD arm needs one: the
+# adaptive bases already default into COSGD's usable band.
+NO_RATE_AXES = {"04", "10"}
+RATE_FLAGS = {"06": ("--lr_sgd", "--lr_sgd_baseline")}
+
 
 def _invoke(folder: str, argv: list[str]) -> None:
     path = _HERE / folder / "run.py"
@@ -68,6 +74,13 @@ def main():
     ap.add_argument("--datasets", nargs="+", default=["covertype", "cifar10"])
     ap.add_argument("--train_subset", type=int, default=None,
                     help="cap train size per cell (e.g. 50000 to keep covertype tractable)")
+    ap.add_argument("--lr", type=float, default=None,
+                    help="rate for the COSGD arm, from pick_lr.py. Required by "
+                         "every axis except 04 and 10")
+    ap.add_argument("--lr_baseline", type=float, default=None,
+                    help="rate for the baseline arm, from pick_lr.py. The two "
+                         "arms do not share an optimum, so a single rate "
+                         "handicaps whichever arm did not choose it")
     ap.add_argument("--smoke", action="store_true")
     ap.add_argument("--aggregate", action="store_true")
     args = ap.parse_args()
@@ -87,6 +100,12 @@ def main():
                 argv += ["--bases", *args.bases]
             if args.train_subset is not None:
                 argv += ["--train_subset", str(args.train_subset)]
+            if num not in NO_RATE_AXES:
+                f_lr, f_base = RATE_FLAGS.get(num, ("--lr", "--lr_baseline"))
+                if args.lr is not None:
+                    argv += [f_lr, str(args.lr)]
+                if args.lr_baseline is not None:
+                    argv += [f_base, str(args.lr_baseline)]
         print(f"\n{'='*70}\n[run_all] AXIS {num} -> {folder}  argv={argv}\n{'='*70}", flush=True)
         try:
             _invoke(folder, argv)

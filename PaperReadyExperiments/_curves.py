@@ -78,25 +78,55 @@ class CurveRecord:
     acc: List[float]
     loss: List[float]
     scalars: Dict[str, Any] = field(default_factory=dict)
+    hp: Dict[str, Any] = field(default_factory=dict)
+    run: str = ""
 
 
-_AXIS_CACHE: Dict[str, List["CurveRecord"]] = {}
+# Runs that a later sweep has replaced. Chapter 4's COSGD axes were first run
+# with the norm cap active and at the baseline's learning rate, which is far
+# above the band COSGD trains in, so those sweeps measure the method at a
+# setting it was never meant to run at. They are kept on disk for provenance
+# and skipped by default here: a replaced sweep shares (base, cell, seed) with
+# its replacement, so leaving them in lets the stale copy win the tie on
+# directory-name order alone.
+SUPERSEDED_RUNS = frozenset({
+    "run_0d04e1",   # 20.05 combine, cifar10   — capped, lr 0.1
+    "run_dd88ba",   # 20.05 combine, covertype — capped, lr 0.1
+    "run_9b2856",   # 20.10 learning rate, cifar10   — capped, 6-point grid
+    "run_baf6d0",   # 20.10 learning rate, covertype — capped, 6-point grid
+    "run_103fc7",   # 20.09 batch size, cifar10   — capped, lr 0.1
+    "run_6558f0",   # 20.09 batch size, covertype — capped, lr 0.1
+    "run_693c2e",   # 20.03 pre-normalisation, covertype — capped, default lr
+})
+
+_AXIS_CACHE: Dict[Any, List["CurveRecord"]] = {}
 
 
-def load_axis(root: Path) -> List[CurveRecord]:
+def load_axis(root: Path, require_lr: Optional[float] = None,
+              skip_runs: Optional[Sequence[str]] = None) -> List[CurveRecord]:
     """Cached wrapper: the results.json files carry the full interference
     logs and are hundreds of kilobytes each, so a driver that asks for the
     same directory once per (base, dataset) combination would otherwise
-    re-parse them dozens of times."""
-    key = str(Path(root).resolve())
+    re-parse them dozens of times.
+
+    `require_lr` keeps only cells recorded at that learning rate, and
+    `skip_runs` drops whole run directories by id. Both exist because an
+    axis directory accumulates every sweep ever written to it, and a
+    superseded sweep shares (base, cell, seed) with its replacement: the
+    filters have to run before the de-duplication or the stale copy can win
+    the tie purely on directory-name order.
+    """
+    skip_runs = SUPERSEDED_RUNS if skip_runs is None else frozenset(skip_runs)
+    key = (str(Path(root).resolve()), require_lr, tuple(sorted(skip_runs)))
     if key not in _AXIS_CACHE:
-        _AXIS_CACHE[key] = _load_axis_uncached(root)
+        _AXIS_CACHE[key] = _load_axis_uncached(root, require_lr, skip_runs)
     # fresh record objects: callers relabel cells in place when splitting a
     # composite label, and must not write through to the cache
     return [replace(r) for r in _AXIS_CACHE[key]]
 
 
-def _load_axis_uncached(root: Path) -> List[CurveRecord]:
+def _load_axis_uncached(root: Path, require_lr: Optional[float] = None,
+                        skip_runs: Iterable[str] = ()) -> List[CurveRecord]:
     """Every completed run beneath `root`, with its per-epoch history.
 
     Runs resumed from a checkpoint carry an empty history (the epoch lists
@@ -115,6 +145,12 @@ def _load_axis_uncached(root: Path) -> List[CurveRecord]:
         h = r.get("history") or {}
         acc, loss = h.get("epoch_test_acc") or [], h.get("epoch_train_loss") or []
         cfg = r.get("config", {})
+        hp = cfg.get("hp") or {}
+        run = next((q.name for q in rj.parents if q.name.startswith("run_")), "")
+        if run in skip_runs:
+            continue
+        if require_lr is not None and hp.get("lr") != require_lr:
+            continue
         # cell label comes from the run-dir name: <base>__<cell>__seed<n>
         parts = rj.parent.name.split("__")
         cell = parts[1] if len(parts) >= 3 else r.get("label", rj.parent.name)
@@ -131,7 +167,7 @@ def _load_axis_uncached(root: Path) -> List[CurveRecord]:
             base=base, cell=cell, seed=seed,
             dataset=dataset,
             acc=[float(v) for v in acc], loss=[float(v) for v in loss],
-            scalars=r.get("scalars", {})))
+            scalars=r.get("scalars", {}), hp=hp, run=run))
     return out
 
 

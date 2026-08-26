@@ -42,8 +42,9 @@ def _tag(a: float) -> str:
     return ("%g" % a).replace(".", "p")
 
 
-def build_cells(strengths, lr):
-    cells = [{"label": "baseline", "method": "baseline", "hp": {"lr": lr}}]
+def build_cells(strengths, lr, lr_baseline=None):
+    cells = [{"label": "baseline", "method": "baseline",
+              "hp": {"lr": lr_baseline if lr_baseline is not None else lr}}]
     for a in strengths:
         cells.append({"label": f"orth{_tag(a)}", "method": "cosgd",
                       "hp": {**CANONICAL, "orth_strength": a, "lr": lr}})
@@ -59,13 +60,17 @@ def main():
                     default=[0.25, 0.5, 0.75, 1.0])
     ap.add_argument("--lr", type=float, required=True,
                     help="the rate this method operates at; see axis 20.10")
+    ap.add_argument("--lr_baseline", type=float, default=None,
+                    help="rate for the baseline arm; defaults to --lr. The two "
+                         "arms do not share an optimum, so a single rate "
+                         "handicaps whichever arm did not choose it")
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--train_subset", type=int, default=None)
     args = ap.parse_args()
 
     for ds in args.datasets:
         run_cosgd_sweep(axis_name=f"20_11_orth_strength_{ds}",
-                        cells=build_cells(args.strengths, args.lr),
+                        cells=build_cells(args.strengths, args.lr, args.lr_baseline),
                         bases=args.bases, dataset=ds, seeds=args.seeds,
                         epochs=args.epochs, out_root=_HERE / "results" / ds,
                         train_subset=args.train_subset)

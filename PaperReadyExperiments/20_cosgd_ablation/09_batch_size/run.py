@@ -35,11 +35,12 @@ CANONICAL = dict(cosgd_method="gram_schmidt_normal", class_order="desc",
                  combine="sum", combine_norm_cap=0.0)
 
 
-def build_cells(batch_sizes, lr):
+def build_cells(batch_sizes, lr, lr_baseline=None):
     cells = []
+    lr_b = lr_baseline if lr_baseline is not None else lr
     for bs in batch_sizes:
         cells.append({"label": f"bs{bs}_baseline", "method": "baseline",
-                      "hp": {"lr": lr, "batch_size": bs}})
+                      "hp": {"lr": lr_b, "batch_size": bs}})
         cells.append({"label": f"bs{bs}_cosgd", "method": "cosgd",
                       "hp": {**CANONICAL, "lr": lr, "batch_size": bs}})
     return cells
@@ -52,7 +53,12 @@ def main():
     ap.add_argument("--datasets", nargs="+", default=["covertype", "cifar10"])
     ap.add_argument("--batch_sizes", type=int, nargs="+", default=[32, 64, 128, 256, 512])
     ap.add_argument("--epochs", type=int, default=20)
-    ap.add_argument("--lr", type=float, default=0.1)
+    ap.add_argument("--lr", type=float, required=True,
+                    help="the rate this method operates at; see axis 20.10")
+    ap.add_argument("--lr_baseline", type=float, default=None,
+                    help="rate for the baseline arm; defaults to --lr. The two "
+                         "arms do not share an optimum, so a single rate "
+                         "handicaps whichever arm did not choose it")
     ap.add_argument("--train_subset", type=int, default=None)
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
@@ -62,7 +68,7 @@ def main():
 
     for ds in args.datasets:
         run_cosgd_sweep(axis_name=f"20_09_batch_size_{ds}",
-                        cells=build_cells(args.batch_sizes, args.lr),
+                        cells=build_cells(args.batch_sizes, args.lr, args.lr_baseline),
                         bases=args.bases, dataset=ds, seeds=args.seeds,
                         epochs=args.epochs, out_root=_HERE / "results" / ds,
                         train_subset=args.train_subset)

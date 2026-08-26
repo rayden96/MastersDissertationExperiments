@@ -38,9 +38,10 @@ CANONICAL = dict(cosgd_method="gram_schmidt_normal", class_order="desc",
                  combine="sum", combine_norm_cap=0.0)
 
 
-def build_cells(lr, max_rescale):
+def build_cells(lr, max_rescale, lr_baseline=None):
     return [
-        {"label": "baseline", "method": "baseline", "hp": {"lr": lr}},
+        {"label": "baseline", "method": "baseline",
+         "hp": {"lr": lr_baseline if lr_baseline is not None else lr}},
         {"label": "preserve0", "method": "cosgd",
          "hp": {**CANONICAL, "preserve_magnitude": False, "lr": lr}},
         {"label": "preserve1", "method": "cosgd",
@@ -56,6 +57,10 @@ def main():
     ap.add_argument("--datasets", nargs="+", default=["covertype", "cifar10"])
     ap.add_argument("--lr", type=float, required=True,
                     help="the rate this method operates at; see axis 20.10")
+    ap.add_argument("--lr_baseline", type=float, default=None,
+                    help="rate for the baseline arm; defaults to --lr. The two "
+                         "arms do not share an optimum, so a single rate "
+                         "handicaps whichever arm did not choose it")
     ap.add_argument("--max_rescale", type=float, default=5.0)
     ap.add_argument("--epochs", type=int, default=20)
     ap.add_argument("--train_subset", type=int, default=None)
@@ -63,7 +68,7 @@ def main():
 
     for ds in args.datasets:
         run_cosgd_sweep(axis_name=f"20_12_preserve_magnitude_{ds}",
-                        cells=build_cells(args.lr, args.max_rescale),
+                        cells=build_cells(args.lr, args.max_rescale, args.lr_baseline),
                         bases=args.bases, dataset=ds, seeds=args.seeds,
                         epochs=args.epochs, out_root=_HERE / "results" / ds,
                         train_subset=args.train_subset)

@@ -41,9 +41,10 @@ PAPER = dict(cosgd_method="gram_schmidt_normal", class_order="desc")
 # combined, with no scaling workaround in the way.
 
 
-def build_cells(lr):
+def build_cells(lr, lr_baseline=None):
     return [
-        {"label": "baseline", "method": "baseline", "hp": {"lr": lr}},
+        {"label": "baseline", "method": "baseline",
+         "hp": {"lr": lr_baseline if lr_baseline is not None else lr}},
         {"label": "sum", "method": "cosgd", "hp": {**PAPER, "combine": "sum", "lr": lr}},
         {"label": "mean", "method": "cosgd", "hp": {**PAPER, "combine": "mean", "lr": lr}},
         {"label": "freq", "method": "cosgd", "hp": {**PAPER, "combine": "freq", "lr": lr}},
@@ -56,7 +57,12 @@ def main():
     ap.add_argument("--seeds", type=int, nargs="+", default=[2026, 2027, 2028])
     ap.add_argument("--datasets", nargs="+", default=["iris", "wine", "breast_cancer", "digits"])
     ap.add_argument("--epochs", type=int, default=None)
-    ap.add_argument("--lr", type=float, default=0.1)
+    ap.add_argument("--lr", type=float, required=True,
+                    help="the rate this method operates at; see axis 20.10")
+    ap.add_argument("--lr_baseline", type=float, default=None,
+                    help="rate for the baseline arm; defaults to --lr. The two "
+                         "arms do not share an optimum, so a single rate "
+                         "handicaps whichever arm did not choose it")
     ap.add_argument("--train_subset", type=int, default=None)
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
@@ -64,7 +70,7 @@ def main():
         args.bases = ["sgd"]; args.seeds = [2026]; args.epochs = 5; args.datasets = ["iris", "digits"]
 
     for ds in args.datasets:
-        run_cosgd_sweep(axis_name=f"20_05_combine_{ds}", cells=build_cells(args.lr),
+        run_cosgd_sweep(axis_name=f"20_05_combine_{ds}", cells=build_cells(args.lr, args.lr_baseline),
                         bases=args.bases, dataset=ds, seeds=args.seeds,
                         epochs=args.epochs, out_root=_HERE / "results" / ds,
                         train_subset=args.train_subset)
