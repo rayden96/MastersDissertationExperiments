@@ -104,6 +104,20 @@ SUPERSEDED_RUNS = frozenset({
     "run_dd88ba",   # 20.05 combine, covertype -- capped, lr 0.1, 6 cells
     "run_9b2856",   # 20.10 learning rate, cifar10   -- capped, 6-point grid
     "run_baf6d0",   # 20.10 learning rate, covertype -- capped, 6-point grid
+    # 10.04 orth method: the first sweep ran the exact projectors in full mode
+    # only, so it could not separate the method from the mode. The completed
+    # 21-cell sweep adds qr_negative and householder_negative and is a superset
+    # of it. Without these the panel mixes the two, which on rmsprop/CIFAR-10
+    # had sequential_negative coming from one sweep and the exact projectors
+    # it is claimed to match coming from the other.
+    "run_609faa",   # adam, covertype
+    "run_e92a61",   # adam, cifar10 (also 7 cells never finished)
+    "run_6cc2c9",   # rmsprop, cifar10
+    "run_e26ce6",   # rmsprop, covertype
+    "run_8f674a",   # sgd, covertype
+    "run_ae55bb",   # sgd, cifar10
+    "run_9f2659",   # signsgd, cifar10
+    "run_ae944a",   # signsgd, covertype
 })
 
 _AXIS_CACHE: Dict[Any, List["CurveRecord"]] = {}
