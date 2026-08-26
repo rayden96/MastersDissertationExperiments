@@ -32,6 +32,7 @@ for p in (str(_REPO), str(_PRE)):
 
 from common import storage                                   # noqa: E402
 from _curves import load_axis, group, final_means, plot_axis, plot_grid  # noqa: E402
+from pick_lr import best_rates                              # noqa: E402
 
 # The two anchors of Chapters 4 and 5. Everything else in results/ is from
 # the earlier small-dataset sweeps and is deliberately not plotted.
@@ -39,6 +40,28 @@ ANCHORS = ["covertype", "cifar10"]
 ANCHOR_TITLE = {"covertype": "Covertype (7 classes)", "cifar10": "CIFAR-10 (10 classes)"}
 
 BASES = ["sgd", "adam", "rmsprop", "signsgd"]
+
+_RATE_CACHE: Dict[str, Optional[tuple]] = {}
+
+
+def anchor_rates(dataset: str) -> Optional[tuple]:
+    """The pair of rates this anchor's axes were launched at, from axis 20.10.
+
+    Every fixed-knob axis runs its COSGD cells at one rate and its baseline at
+    another, because the two arms' optima are more than a decade apart. Any
+    cell on disk recorded at some other rate is left over from an earlier
+    sweep, so the pair doubles as the filter that keeps those out: it needs no
+    maintenance, unlike a list of superseded run ids.
+    """
+    if dataset not in _RATE_CACHE:
+        try:
+            arms = best_rates(dataset)
+            rates = tuple(sorted({arms[a]["lr"] for a in ("cosgd", "baseline")
+                                  if a in arms}))
+        except Exception:
+            rates = ()
+        _RATE_CACHE[dataset] = rates or None
+    return _RATE_CACHE[dataset]
 
 # axis key -> (results-dir stem, figure stem, cell order, pretty labels)
 AXES: Dict[str, dict] = {
@@ -84,8 +107,12 @@ AXES: Dict[str, dict] = {
 # baseline at every value, so each value gets its own panel.
 HYPER_AXES: Dict[str, dict] = {
     "batch_size": dict(stem="20_09_batch_size", fig="ax_batch_size",
+                       filter_lr=True,
                        label=lambda v: f"batch {v[2:]}"),
+    # the learning-rate axis sweeps the rate itself, so it cannot be filtered
+    # by it; its one superseded sweep is excluded by run id instead
     "learning_rate": dict(stem="20_10_learning_rate", fig="ax_learning_rate",
+                          filter_lr=False,
                           label=lambda v: "lr " + v[2:].replace("p", ".").replace("m", "-")),
 }
 
@@ -133,7 +160,7 @@ def do_axis(key: str, outdir: Path, quiet: bool = False) -> Optional[dict]:
     for ds in ANCHORS:
         recs = []
         for d in _axis_dirs(spec["stem"], ds):
-            recs.extend(load_axis(d))
+            recs.extend(load_axis(d, require_lr=anchor_rates(ds)))
         recs = [r for r in recs if r.cell not in drop]
         if not recs:
             continue
@@ -170,8 +197,9 @@ def do_hyper_axis(key: str, outdir: Path) -> Optional[dict]:
     by_anchor: Dict[str, list] = {ds: [] for ds in ANCHORS}
     for ds in ANCHORS:
         recs = []
+        lr_filter = anchor_rates(ds) if spec.get("filter_lr") else None
         for d in _axis_dirs(spec["stem"], ds):
-            recs.extend(load_axis(d))
+            recs.extend(load_axis(d, require_lr=lr_filter))
         if not recs:
             continue
         stats[ds] = final_means(recs)
@@ -204,13 +232,20 @@ def do_hyper_axis(key: str, outdir: Path) -> Optional[dict]:
 
 def do_base_optimizer(outdir: Path) -> Optional[dict]:
     """Two things vary at once here, so it gets a grid of accuracy panels:
-    rows are the anchors, columns the base optimisers."""
+    rows are the anchors, columns the base optimisers.
+
+    Only the SGD column takes the anchor's rates. The adaptive bases run at
+    their own 1e-3 default, which already sits inside COSGD's usable band, so
+    they were never mis-tuned and filtering them on SGD's rates would discard
+    every one of them.
+    """
     cells, stats = [], {}
     for ds in ANCHORS:
         for base in BASES:
             recs = []
+            lr_filter = anchor_rates(ds) if base == "sgd" else None
             for d in sorted(_results_root().glob(f"20_06_base_optimizer_{ds}_{base}*")):
-                recs.extend(load_axis(d))
+                recs.extend(load_axis(d, require_lr=lr_filter))
             if not recs:
                 continue
             cells.append((f"{ANCHOR_TITLE.get(ds, ds).split(' (')[0]} — {base}",

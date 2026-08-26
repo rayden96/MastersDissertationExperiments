@@ -23,6 +23,7 @@ Entry points
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -69,6 +70,10 @@ CELL_COLOURS = [
 ]
 
 
+# 'sgd__cosgd__seed2027 (1)', the name an unpack gives a colliding directory.
+_DUP_COPY = re.compile(r" \(\d+\)$")
+
+
 @dataclass
 class CurveRecord:
     base: str
@@ -82,40 +87,46 @@ class CurveRecord:
     run: str = ""
 
 
-# Runs that a later sweep has replaced. Chapter 4's COSGD axes were first run
-# with the norm cap active and at the baseline's learning rate, which is far
-# above the band COSGD trains in, so those sweeps measure the method at a
-# setting it was never meant to run at. They are kept on disk for provenance
-# and skipped by default here: a replaced sweep shares (base, cell, seed) with
-# its replacement, so leaving them in lets the stale copy win the tie on
-# directory-name order alone.
+# Runs that a later sweep has replaced *and* that a re-run will not overwrite.
+# A run directory is keyed by its cell labels, so re-running an axis whose
+# labels are unchanged writes over the old cells in place and needs no entry
+# here. Only a sweep whose cell set itself changed lands in a directory of its
+# own and survives alongside its replacement, sharing (base, cell, seed) with
+# it, which lets the stale copy win the de-duplication tie on directory-name
+# order alone. Those are the four below: the combine axis lost its three cap
+# cells, and the learning-rate axis grew from six points to eight.
+#
+# Everything else stale is excluded by `require_lr` instead, which is
+# self-maintaining: the rate a cell was recorded at either is one of the two
+# the chapter now runs, or it is not.
 SUPERSEDED_RUNS = frozenset({
-    "run_0d04e1",   # 20.05 combine, cifar10   — capped, lr 0.1
-    "run_dd88ba",   # 20.05 combine, covertype — capped, lr 0.1
-    "run_9b2856",   # 20.10 learning rate, cifar10   — capped, 6-point grid
-    "run_baf6d0",   # 20.10 learning rate, covertype — capped, 6-point grid
-    "run_103fc7",   # 20.09 batch size, cifar10   — capped, lr 0.1
-    "run_6558f0",   # 20.09 batch size, covertype — capped, lr 0.1
-    "run_693c2e",   # 20.03 pre-normalisation, covertype — capped, default lr
+    "run_0d04e1",   # 20.05 combine, cifar10   -- capped, lr 0.1, 6 cells
+    "run_dd88ba",   # 20.05 combine, covertype -- capped, lr 0.1, 6 cells
+    "run_9b2856",   # 20.10 learning rate, cifar10   -- capped, 6-point grid
+    "run_baf6d0",   # 20.10 learning rate, covertype -- capped, 6-point grid
 })
 
 _AXIS_CACHE: Dict[Any, List["CurveRecord"]] = {}
 
 
-def load_axis(root: Path, require_lr: Optional[float] = None,
+def load_axis(root: Path, require_lr: Optional[Any] = None,
               skip_runs: Optional[Sequence[str]] = None) -> List[CurveRecord]:
     """Cached wrapper: the results.json files carry the full interference
     logs and are hundreds of kilobytes each, so a driver that asks for the
     same directory once per (base, dataset) combination would otherwise
     re-parse them dozens of times.
 
-    `require_lr` keeps only cells recorded at that learning rate, and
-    `skip_runs` drops whole run directories by id. Both exist because an
-    axis directory accumulates every sweep ever written to it, and a
-    superseded sweep shares (base, cell, seed) with its replacement: the
-    filters have to run before the de-duplication or the stale copy can win
-    the tie purely on directory-name order.
+    `require_lr` keeps only cells recorded at that learning rate, or at one
+    of several when given a collection: the two arms of an axis do not share
+    a rate, so a fixed-knob axis is filtered to the pair it was launched at.
+    `skip_runs` drops whole run directories by id. Both exist because an axis
+    directory accumulates every sweep ever written to it, and a superseded
+    sweep shares (base, cell, seed) with its replacement: the filters have to
+    run before the de-duplication or the stale copy can win the tie purely on
+    directory-name order.
     """
+    if require_lr is not None and not isinstance(require_lr, (int, float)):
+        require_lr = tuple(sorted(require_lr, key=str))
     skip_runs = SUPERSEDED_RUNS if skip_runs is None else frozenset(skip_runs)
     key = (str(Path(root).resolve()), require_lr, tuple(sorted(skip_runs)))
     if key not in _AXIS_CACHE:
@@ -135,9 +146,17 @@ def _load_axis_uncached(root: Path, require_lr: Optional[float] = None,
     """
     out: List[CurveRecord] = []
     seen = set()
-    for rj in sorted(Path(root).rglob("results.json")):
-        # Archives unpacked twice leave 'seed2027 (1)' siblings; keep the first
-        # of any (base, cell, seed) rather than double-counting the seed.
+
+    def _order(rj: Path):
+        # An archive unpacked twice leaves 'seed2027 (1)' beside 'seed2027',
+        # holding whatever that cell was on the earlier download. Plain
+        # sorted() puts the copy first, so the de-duplication below keeps the
+        # stale one; push every parenthesised copy behind its original.
+        return (1 if _DUP_COPY.search(rj.parent.name) else 0, str(rj))
+
+    for rj in sorted(Path(root).rglob("results.json"), key=_order):
+        # Keep the first of any (dataset, base, cell, seed) rather than
+        # double-counting the seed.
         try:
             r = json.loads(rj.read_text())
         except Exception:
@@ -149,8 +168,10 @@ def _load_axis_uncached(root: Path, require_lr: Optional[float] = None,
         run = next((q.name for q in rj.parents if q.name.startswith("run_")), "")
         if run in skip_runs:
             continue
-        if require_lr is not None and hp.get("lr") != require_lr:
-            continue
+        if require_lr is not None:
+            allowed = (require_lr,) if isinstance(require_lr, (int, float)) else require_lr
+            if hp.get("lr") not in allowed:
+                continue
         # cell label comes from the run-dir name: <base>__<cell>__seed<n>
         parts = rj.parent.name.split("__")
         cell = parts[1] if len(parts) >= 3 else r.get("label", rj.parent.name)
