@@ -19,6 +19,7 @@ import argparse
 import importlib.util
 import sys
 import time
+import traceback
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
@@ -86,6 +87,7 @@ def main():
     args = ap.parse_args()
 
     t0 = time.time()
+    failed = []
     for num in args.axes:
         if num not in AXES:
             print(f"!! unknown axis {num}"); continue
@@ -112,11 +114,20 @@ def main():
         except SystemExit:
             pass
         except Exception as e:
+            # Print the traceback and remember the failure. Swallowing it and
+            # exiting zero is how a Colab session can run every axis, produce
+            # nothing, and still package a result archive as though it had
+            # worked; the caller needs a non-zero exit to notice.
             print(f"!! axis {num} ({folder}) raised {type(e).__name__}: {e}", flush=True)
+            traceback.print_exc()
+            failed.append(num)
 
     if args.aggregate:
         _invoke("08_cross_summary", [])
     print(f"\n[run_all] done in {time.time()-t0:.0f}s")
+    if failed:
+        print(f"[run_all] FAILED axes: {failed}", flush=True)
+        sys.exit(1)
 
 
 if __name__ == "__main__":
