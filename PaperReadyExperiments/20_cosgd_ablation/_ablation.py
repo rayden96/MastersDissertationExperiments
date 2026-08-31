@@ -217,7 +217,13 @@ def run_cosgd_sweep(
                     base_optimizer=base, num_classes=num_classes, epochs=epochs,
                     batch_size=cell_bs, seed=seed, trial_index=0, hp=hp,
                     model_kwargs=mk, log_every_n_steps=log_every,
-                    checkpoint_every_n_steps=1000, num_workers=num_workers,
+                    # No mid-run checkpointing. A cell here is twenty epochs
+                    # and a couple of minutes, so repeating one costs less than
+                    # checkpointing every one of them, and on Colab the write
+                    # lands on Drive, where it is the only step in the loop
+                    # that can fail for reasons unrelated to the run. Resume
+                    # granularity is the cell, via JobManager, not the step.
+                    checkpoint_every_n_steps=0, num_workers=num_workers,
                 )
                 t = Trainer(cfg, spec, model, train_ds, bundle.val, bundle.test,
                             run_dir, device, criterion=crit, meter=meter, summarize=summarize)

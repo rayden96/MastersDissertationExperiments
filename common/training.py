@@ -57,7 +57,7 @@ class TrainConfig:
     model_kwargs: Dict[str, Any] = field(default_factory=dict)
     eval_every_epoch: bool = True
     eval_every_n_steps: Optional[int] = None
-    checkpoint_every_n_steps: int = 1000
+    checkpoint_every_n_steps: int = 1000   # 0 disables mid-run checkpointing
     log_every_n_steps: int = 50
     test_target: Optional[float] = None
     train_target: Optional[float] = None
@@ -351,7 +351,13 @@ class Trainer:
                     if (self.config.eval_every_n_steps and
                             self.global_step % self.config.eval_every_n_steps == 0):
                         self._eval_and_log(logger, epoch, which="val")
-                    if self.global_step % self.config.checkpoint_every_n_steps == 0:
+                    # 0 disables mid-run checkpointing. A short ablation cell
+                    # is cheaper to repeat than to checkpoint, and on Colab the
+                    # write goes to Drive, which makes it the one step in the
+                    # loop that can fail for reasons having nothing to do with
+                    # the run.
+                    if (self.config.checkpoint_every_n_steps and
+                            self.global_step % self.config.checkpoint_every_n_steps == 0):
                         self._save_checkpoint("last")
 
                 train_loss = loss_sum / max(n_batches, 1)
