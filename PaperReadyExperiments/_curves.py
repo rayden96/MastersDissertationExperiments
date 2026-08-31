@@ -118,6 +118,11 @@ SUPERSEDED_RUNS = frozenset({
     "run_ae55bb",   # sgd, cifar10
     "run_9f2659",   # signsgd, cifar10
     "run_ae944a",   # signsgd, covertype
+    # A single-seed diagnostic run at the corrected covertype rates, left
+    # behind by a local attempt to reproduce the wave-4 Colab failure. It sits
+    # in a directory of its own because the run hash covers the seed list, and
+    # it is at the rates the filter accepts, so it has to be named here.
+    "run_d25640",   # 20.03 pre-normalisation, covertype -- one seed only
 })
 
 _AXIS_CACHE: Dict[Any, List["CurveRecord"]] = {}
