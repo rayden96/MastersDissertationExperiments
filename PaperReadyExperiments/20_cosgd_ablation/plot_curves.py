@@ -36,7 +36,11 @@ from pick_lr import best_rates                              # noqa: E402
 
 # The two anchors of Chapters 4 and 5. Everything else in results/ is from
 # the earlier small-dataset sweeps and is deliberately not plotted.
-ANCHORS = ["covertype", "cifar10"]
+# CIFAR-10 is the sole anchor for the ablation chapters. Covertype is
+# retained in the head-to-head comparison of Chapter 6, where it stands
+# for the tabular regime, but carrying two anchors through every design
+# axis doubled the grid without changing which setting of any knob won.
+ANCHORS = ["cifar10"]
 ANCHOR_TITLE = {"covertype": "Covertype (7 classes)", "cifar10": "CIFAR-10 (10 classes)"}
 
 BASES = ["sgd", "adam", "rmsprop", "signsgd"]

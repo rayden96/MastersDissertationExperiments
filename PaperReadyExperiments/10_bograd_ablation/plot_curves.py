@@ -35,7 +35,11 @@ for p in (str(_REPO), str(_PRE)):
 from common import storage                                    # noqa: E402
 from _curves import load_axis, group, final_means, plot_grid   # noqa: E402
 
-ANCHORS = ["covertype", "cifar10"]
+# CIFAR-10 is the sole anchor for the ablation chapters. Covertype is
+# retained in the head-to-head comparison of Chapter 6, where it stands
+# for the tabular regime, but carrying two anchors through every design
+# axis doubled the grid without changing which setting of any knob won.
+ANCHORS = ["cifar10"]
 ANCHOR_SHORT = {"covertype": "Covertype", "cifar10": "CIFAR-10"}
 BASES = ["sgd", "adam", "rmsprop", "signsgd"]
 
