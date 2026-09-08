@@ -74,14 +74,15 @@ AXES: Dict[str, dict] = {
         order=["baseline", "sum", "mean", "freq"],
         pretty={"sum": "sum", "mean": "mean", "freq": "frequency"},
     ),
+    # Only the projection mode is reported. The classical and modified
+    # Gram-Schmidt variants were both swept and are indistinguishable here
+    # (13.00 epochs each in full mode), so the axis is shown on classical
+    # alone and the two modes are compared without a second factor moving.
     "gs_variant": dict(
         stem="20_01_gs_variant", fig="ax_gs_variant",
-        order=["baseline", "gram_schmidt_normal", "gram_schmidt_negative",
-               "modified_gs_normal", "modified_gs_negative"],
-        pretty={"gram_schmidt_normal": "classical, full",
-                "gram_schmidt_negative": "classical, negative-only",
-                "modified_gs_normal": "modified, full",
-                "modified_gs_negative": "modified, negative-only"},
+        order=["baseline", "gram_schmidt_normal", "gram_schmidt_negative"],
+        pretty={"gram_schmidt_normal": "full projection",
+                "gram_schmidt_negative": "negative-only"},
     ),
     "class_order": dict(
         stem="20_02_class_order", fig="ax_class_order",
