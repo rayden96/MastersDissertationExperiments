@@ -304,6 +304,7 @@ class Trainer:
             torch.cuda.reset_peak_memory_stats()
         status = "completed"
         epoch_test_acc: List[float] = []
+        epoch_val_acc: List[float] = []
         epoch_train_loss: List[float] = []
         is_per_class = self.spec.step_kind == "per_class"
 
@@ -375,6 +376,7 @@ class Trainer:
                     vloss, vacc = self._eval_and_log(logger, epoch, which="val")
                     tloss, tacc = self._eval_and_log(logger, epoch, which="test")
                     epoch_test_acc.append(tacc)
+                    epoch_val_acc.append(vacc)
                     if vacc > self.best_metric:
                         self.best_metric = vacc
                         self._save_checkpoint("best")
@@ -388,7 +390,8 @@ class Trainer:
         finally:
             logger.close()
 
-        return self._write_results(status, epoch_test_acc, epoch_train_loss)
+        return self._write_results(status, epoch_test_acc, epoch_train_loss,
+                                   epoch_val_acc)
 
     def _eval_and_log(self, logger, epoch, which: str):
         ds = self.val_dataset if which == "val" else self.test_dataset
@@ -398,7 +401,8 @@ class Trainer:
                     "t": time.time()})
         return loss, acc
 
-    def _write_results(self, status, epoch_test_acc, epoch_train_loss) -> Dict[str, Any]:
+    def _write_results(self, status, epoch_test_acc, epoch_train_loss,
+                       epoch_val_acc=None) -> Dict[str, Any]:
         total_wall = self._t_offset + (time.time() - self._t0)
         final_test_loss, final_test_acc = evaluate(
             self.model, self._eval_loader(self.test_dataset), self.device)
@@ -427,6 +431,7 @@ class Trainer:
             "scalars": scalars,
             "history": {
                 "epoch_test_acc": epoch_test_acc,
+                "epoch_val_acc": epoch_val_acc or [],
                 "epoch_train_loss": epoch_train_loss,
             },
             "order_hash": getattr(self, "_last_order_hash", None),

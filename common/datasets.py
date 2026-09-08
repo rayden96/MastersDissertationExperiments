@@ -421,7 +421,7 @@ def cifar10_subclass_bundle(n_subclasses: int, val_fraction: float = 0.1, seed: 
 # Registry
 # ---------------------------------------------------------------------------
 DATASETS = ("mnist", "fashion_mnist", "emnist_balanced", "cifar10", "cifar100",
-            "covertype", "yahoo_answers", "titanic")
+            "covertype", "yahoo_answers", "titanic", "pendigits")
 # Low-dimensional ladder (COSGD's strong regime); registered separately so the
 # main 6-dataset bakeoff suite stays unchanged.
 SMALL_DATASETS = ("iris", "wine", "breast_cancer", "digits")
@@ -474,6 +474,50 @@ def _titanic_bundle(val_fraction: float, seed: int) -> DatasetBundle:
     return DatasetBundle(train_sub, val_sub, test, meta)
 
 
+def _pendigits_bundle(val_fraction: float, seed: int) -> DatasetBundle:
+    """Pen-based handwritten digit recognition: 16 features, 10 classes, 10,992
+    samples, from OpenML.
+
+    The low-dimensional rung of the bakeoff ladder. Titanic, the conference
+    study's other tabular problem, has two classes and a ceiling that every
+    optimiser reaches inside one epoch, so it separates nothing and shows no
+    curve. Pendigits keeps the dimension low (16 features, against MNIST's 784)
+    while giving ten classes and enough samples that the accuracy climbs over
+    tens of epochs, which is what epochs-to-target needs to have resolution.
+    Ten classes also matters for COSGD specifically: the method orthogonalises
+    per-class subgradients, and on a two-class problem there is exactly one
+    pair to act on.
+
+    Each of the 16 features is an (x, y) pen coordinate already scaled to
+    [0, 100] by the dataset's authors; standardisation is fitted on the
+    training portion only.
+    """
+    from sklearn.datasets import fetch_openml
+    from sklearn.preprocessing import StandardScaler
+
+    raw = fetch_openml("pendigits", version=1, as_frame=True, parser="auto")
+    X = raw.data.to_numpy(dtype=np.float32)
+    y = raw.target.to_numpy().astype(np.int64)
+
+    rng = np.random.default_rng(seed)
+    idx = rng.permutation(len(y))
+    n_test = max(1, int(0.25 * len(y)))
+    test_idx, rest_idx = idx[:n_test], idx[n_test:]
+
+    sc = StandardScaler().fit(X[rest_idx])
+    Xs = sc.transform(X).astype(np.float32)
+
+    Xt, yt = torch.from_numpy(Xs), torch.from_numpy(y)
+    full_train = TensorDataset(Xt[rest_idx], yt[rest_idx])
+    test = TensorDataset(Xt[test_idx], yt[test_idx])
+    train_sub, val_sub = stratified_val_split(full_train, val_fraction, seed)
+
+    meta = dict(num_classes=10, input_kind="tabular", model="mlp",
+                model_kwargs={"in_features": Xs.shape[1], "hidden": (32,)},
+                in_features=Xs.shape[1], epochs=30, batch_size=32)
+    return DatasetBundle(train_sub, val_sub, test, meta)
+
+
 def get_dataset(name: str, *, val_fraction: float = 0.1, seed: int = 2026,
                 augment: bool = False, **kwargs) -> DatasetBundle:
     """Build a registered dataset bundle (train/val/test + meta).
@@ -487,6 +531,8 @@ def get_dataset(name: str, *, val_fraction: float = 0.1, seed: int = 2026,
         return _image_bundle(name, val_fraction, seed, augment=augment)
     if name == "titanic":
         return _titanic_bundle(val_fraction, seed)
+    if name == "pendigits":
+        return _pendigits_bundle(val_fraction, seed)
     if name == "covertype":
         return _covertype_bundle(val_fraction, seed)
     if name == "yahoo_answers":
