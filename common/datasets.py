@@ -144,6 +144,13 @@ def _image_bundle(name: str, val_fraction: float, seed: int,
         meta = dict(num_classes=10, input_kind="image", model="grayscale_cnn",
                     model_kwargs={}, in_shape=(1, 28, 28), epochs=10, batch_size=128)
         augment = False
+    elif name == "fashion_mnist":
+        eval_tf = transforms.Compose([transforms.ToTensor(),
+                                      transforms.Normalize((0.2860,), (0.3530,))])
+        ctor, kw = tvd.FashionMNIST, {}
+        meta = dict(num_classes=10, input_kind="image", model="grayscale_cnn",
+                    model_kwargs={}, in_shape=(1, 28, 28), epochs=10, batch_size=128)
+        augment = False
     elif name == "emnist_balanced":
         eval_tf = transforms.Compose([transforms.ToTensor(),
                                       transforms.Normalize((0.1751,), (0.3332,))])
@@ -413,10 +420,58 @@ def cifar10_subclass_bundle(n_subclasses: int, val_fraction: float = 0.1, seed: 
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
-DATASETS = ("mnist", "emnist_balanced", "cifar10", "cifar100", "covertype", "yahoo_answers")
+DATASETS = ("mnist", "fashion_mnist", "emnist_balanced", "cifar10", "cifar100",
+            "covertype", "yahoo_answers", "titanic")
 # Low-dimensional ladder (COSGD's strong regime); registered separately so the
 # main 6-dataset bakeoff suite stays unchanged.
 SMALL_DATASETS = ("iris", "wine", "breast_cancer", "digits")
+
+
+def _titanic_bundle(val_fraction: float, seed: int) -> DatasetBundle:
+    """Titanic survival, the second tabular problem of the COSGD conference study.
+
+    Fetched from OpenML and cached by scikit-learn. Preprocessing is the minimum
+    that makes the columns usable: median imputation for the two numeric columns
+    with missing values, one-hot for the three categoricals, and standardisation
+    fitted on the training portion only. Free-text and near-unique columns
+    (name, ticket, cabin, boat, body, home.dest) are dropped rather than encoded.
+    """
+    import pandas as pd
+    from sklearn.datasets import fetch_openml
+    from sklearn.preprocessing import StandardScaler
+
+    raw = fetch_openml("titanic", version=1, as_frame=True, parser="auto")
+    df = raw.frame.copy()
+    y = df["survived"].astype(int).to_numpy().astype(np.int64)
+
+    num = ["age", "fare", "sibsp", "parch"]
+    cat = ["pclass", "sex", "embarked"]
+    X = df[num + cat].copy()
+    for c in num:
+        X[c] = pd.to_numeric(X[c], errors="coerce")
+        X[c] = X[c].fillna(X[c].median())
+    for c in cat:
+        X[c] = X[c].astype("object").fillna("missing").astype(str)
+    X = pd.get_dummies(X, columns=cat, drop_first=False)
+    X = X.to_numpy(dtype=np.float32)
+
+    rng = np.random.default_rng(seed)
+    idx = rng.permutation(len(y))
+    n_test = max(1, int(0.25 * len(y)))
+    test_idx, rest_idx = idx[:n_test], idx[n_test:]
+
+    sc = StandardScaler().fit(X[rest_idx])
+    Xs = sc.transform(X).astype(np.float32)
+
+    Xt, yt = torch.from_numpy(Xs), torch.from_numpy(y)
+    full_train = TensorDataset(Xt[rest_idx], yt[rest_idx])
+    test = TensorDataset(Xt[test_idx], yt[test_idx])
+    train_sub, val_sub = stratified_val_split(full_train, val_fraction, seed)
+
+    meta = dict(num_classes=2, input_kind="tabular", model="mlp",
+                model_kwargs={"in_features": Xs.shape[1], "hidden": (16,)},
+                in_features=Xs.shape[1], epochs=15, batch_size=8)
+    return DatasetBundle(train_sub, val_sub, test, meta)
 
 
 def get_dataset(name: str, *, val_fraction: float = 0.1, seed: int = 2026,
@@ -428,8 +483,10 @@ def get_dataset(name: str, *, val_fraction: float = 0.1, seed: int = 2026,
     defaults to False so the ablation studies keep the clean, unregularised
     geometry they were designed around; the main comparison turns it on.
     """
-    if name in ("mnist", "emnist_balanced", "cifar10", "cifar100"):
+    if name in ("mnist", "fashion_mnist", "emnist_balanced", "cifar10", "cifar100"):
         return _image_bundle(name, val_fraction, seed, augment=augment)
+    if name == "titanic":
+        return _titanic_bundle(val_fraction, seed)
     if name == "covertype":
         return _covertype_bundle(val_fraction, seed)
     if name == "yahoo_answers":

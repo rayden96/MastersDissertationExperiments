@@ -242,7 +242,14 @@ class Trainer:
             },
             "meter_state": self.meter.state_dict() if self.meter is not None else None,
         }
-        storage.save_checkpoint(self.ckpt_dir / f"{tag}.pt", state)
+        # A checkpoint is a convenience for resuming, so failing to write one
+        # must not lose a run that is otherwise fine. Windows in particular
+        # denies the atomic replace when a scanner holds the temporary file.
+        try:
+            storage.save_checkpoint(self.ckpt_dir / f"{tag}.pt", state)
+        except Exception as e:
+            print(f"    [warn] checkpoint '{tag}' not written "
+                  f"({type(e).__name__}: {e}); training continues", flush=True)
 
     def _maybe_resume(self) -> bool:
         ckpt = storage.load_checkpoint(self.ckpt_dir / "last.pt", map_location=self.device)
