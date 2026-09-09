@@ -49,7 +49,11 @@ ORDER = ["pendigits", "mnist", "fashion_mnist", "cifar10"]
 # The batch size each panel is drawn at. A dataset's results directory holds one
 # run directory per batch size, and mixing two of them into one curve would be
 # silent and wrong, so the panel names the one it wants.
-PLOT_BATCH = {"titanic": 8, "pendigits": 32, "mnist": 128,
+# Pendigits is drawn at 128, not at the 32 it was first run at, so that every
+# panel gives COSGD the same 12.8 samples per class to build each per-class
+# subgradient from. At 32 the ladder varies samples-per-class alongside
+# dimension, which is a second explanation for anything it shows.
+PLOT_BATCH = {"titanic": 8, "pendigits": 128, "mnist": 128,
               "fashion_mnist": 128, "cifar10": 128}
 TITLE = {"titanic": "Titanic (13 features, 2 classes)",
          "pendigits": "Pendigits (16, 10)",
@@ -143,7 +147,9 @@ def main():
         print("no results found under", storage.get_results_root() / EXP)
         return
 
-    ncols = min(3, len(have))
+    # four panels read better as a square than as a row of three with a
+    # single orphan beneath it
+    ncols = 2 if len(have) in (2, 4) else min(3, len(have))
     nrows = int(np.ceil(len(have) / ncols))
     fig, axes = plt.subplots(nrows, ncols, figsize=(4.6 * ncols, 3.6 * nrows),
                              squeeze=False)
