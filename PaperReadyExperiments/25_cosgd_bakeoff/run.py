@@ -305,10 +305,14 @@ def final_dataset(name, bundle, seeds, device, crit, picked,
     batch = batch or cfg["batch"]
 
     out_root = storage.persistent_dir(f"{EXP}/{name}")
+    # Deliberately not keyed on `picked`: correcting one arm's rate must
+    # re-run that arm inside the existing directory (the JobManager compares
+    # hp, so it does) rather than opening a new directory holding only the
+    # corrected arm.
     sig = storage.config_hash({"exp": EXP, "stage": "final", "dataset": name,
                                "arms": [arm_label(m, b) for m, b in ARMS],
-                               "lr": picked, "seeds": list(seeds),
-                               "epochs": epochs, "batch_size": batch})
+                               "seeds": list(seeds), "epochs": epochs,
+                               "batch_size": batch})
     run_dir = Path(out_root) / f"run_{sig}"
     run_dir.mkdir(parents=True, exist_ok=True)
     jm = JobManager(run_dir / "cells")
@@ -336,7 +340,7 @@ def final_dataset(name, bundle, seeds, device, crit, picked,
 
 
 def run_dataset(name, seeds, stage, epochs=None, batch=None, tune_epochs=None,
-                tune_seed=2026):
+                tune_seed=2026, override_lr=None):
     bundle = get_dataset(name)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     crit = nn.CrossEntropyLoss()
@@ -354,6 +358,13 @@ def run_dataset(name, seeds, stage, epochs=None, batch=None, tune_epochs=None,
                 raise FileNotFoundError(
                     f"no tuned_lr.json for {name}; run --stage tune first")
             picked = json.loads(f.read_text())["picked"]
+        picked = dict(picked)
+        for arm, lr in (override_lr or {}).items():
+            if arm not in picked:
+                raise ValueError(f"--override_lr names unknown arm '{arm}'")
+            print(f"  [{name}] override: {arm} {picked[arm]:g} -> {lr:g}",
+                  flush=True)
+            picked[arm] = lr
         final_dataset(name, bundle, seeds, device, crit, picked,
                       epochs=epochs, batch=batch)
 
@@ -367,8 +378,20 @@ def main():
     ap.add_argument("--tune_epochs", type=int, default=None)
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--batch", type=int, default=None)
+    ap.add_argument("--override_lr", nargs="+", default=None,
+                    metavar="ARM=LR",
+                    help="replace a tuned rate, e.g. sgd=0.3. For an arm whose "
+                         "tuned rate diverges on some seeds: single-seed "
+                         "tuning cannot see that, and the next rate down is "
+                         "the honest substitute")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
+    override = {}
+    for spec in (args.override_lr or []):
+        arm, _, val = spec.partition("=")
+        if not val:
+            raise SystemExit(f"--override_lr wants ARM=LR, got '{spec}'")
+        override[arm] = float(val)
     if args.smoke:
         args.datasets = ["titanic"]; args.seeds = [2026]
         args.epochs = 3; args.tune_epochs = 3
@@ -380,7 +403,7 @@ def main():
             print(f"!! unknown dataset {name}"); continue
         try:
             run_dataset(name, args.seeds, args.stage, args.epochs, args.batch,
-                        args.tune_epochs, args.tune_seed)
+                        args.tune_epochs, args.tune_seed, override)
         except Exception as e:
             import traceback
             print(f"!! {name} raised {type(e).__name__}: {e}", flush=True)
