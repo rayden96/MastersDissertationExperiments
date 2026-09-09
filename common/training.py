@@ -256,10 +256,17 @@ class Trainer:
         if ckpt is None:
             return False
         if ckpt.get("config_hash") != self._cfg_hash:
-            raise RuntimeError(
-                f"Checkpoint config_hash {ckpt.get('config_hash')} != current {self._cfg_hash}. "
-                "Refusing to resume into a different config. Delete the run dir or change run id."
-            )
+            # A checkpoint written under a different config belongs to a
+            # superseded run of this cell, not to this one. Resuming into it
+            # would be wrong, but so is refusing to run: re-launching an axis
+            # at a corrected learning rate leaves exactly this state behind in
+            # every cell, and raising here killed the whole sweep on its first
+            # cell. Start from scratch instead and say so. The stale file is
+            # overwritten by this run's own first checkpoint.
+            print(f"    [warn] ignoring checkpoint from a different config "
+                  f"({ckpt.get('config_hash')} != {self._cfg_hash}); "
+                  f"starting this cell from scratch", flush=True)
+            return False
         self.model.load_state_dict(ckpt["model_state"])
         self.optimizer.load_state_dict(ckpt["optimizer_state"])
         self.global_step = ckpt["global_step"]
