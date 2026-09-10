@@ -213,95 +213,185 @@ def do_batch_K(outdir: Path) -> Optional[dict]:
 def do_lr(outdir: Path) -> Optional[dict]:
     """10.02 sweeps the learning rate for a baseline arm and a BOGrad arm.
 
-    Two figures: the basin (best accuracy against learning rate, which is
-    the natural summary of a tuning sweep and the one the chapter's
-    argument turns on), and the curves of each arm at its own best rate,
-    which is the only fair curve comparison this axis supports.
+    One figure, one row per base optimiser: test accuracy on the left and
+    training loss on the right. Each panel carries a single baseline curve,
+    drawn at the baseline's own best rate, against BOGrad at every rate in
+    the grid. The question this axis answers is where BOGrad's usable band
+    sits relative to a properly tuned baseline, and that reads directly off
+    the curves. A basin of best accuracy against rate hides how quickly each
+    rate gets there, which is the quantity the rest of the dissertation ranks
+    on.
+
+    The baseline's rate is chosen the same way every other comparison in the
+    dissertation is ranked: fewest epochs to a common target, 99% of the best
+    final accuracy any cell on that base reaches. Ties, including the case
+    where no baseline rate reaches the target at all, are broken by the mean
+    accuracy over the whole run, which is the closest measure of speed an
+    all-censored sweep offers.
     """
     import numpy as np
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from common.plotting import apply_thesis_rcparams
-    from _curves import curve_stats, BASELINE_STYLE
+    from _curves import BASELINE_STYLE, epochs_to_target
 
     apply_thesis_rcparams("dense")
+    ds = "cifar10"
+    pretty = {"sgd": "SGD", "adam": "Adam", "rmsprop": "RMSprop",
+              "signsgd": "SignSGD"}
     stats: Dict[str, dict] = {}
-    basin: Dict[tuple, Dict[str, Dict[float, float]]] = {}
-    best_curves = []
+    # the speed table the chapter quotes; kept out of `stats`, whose shape is
+    # cell -> mean/std/n for main()'s printer
+    summary: Dict[str, dict] = {}
+    rows = []
 
-    for ds in ANCHORS:
-        for base in BASES:
-            recs = _records("10_02_lr_retune", base, ds)
-            if not recs:
+    def seed_array(recs, key, width):
+        seeds = [list(getattr(r, key)) for r in recs if getattr(r, key)]
+        if not seeds:
+            return None
+        arr = np.full((len(seeds), width), np.nan)
+        for i, s in enumerate(seeds):
+            v = np.asarray(s[-width:], dtype=float)
+            # a diverged seed logs inf or nan; it must not poison the mean of
+            # the seeds that trained
+            v[~np.isfinite(v)] = np.nan
+            # A run resumed from a checkpoint logs only the epochs after the
+            # resume point, and those are the LAST epochs of the run. Aligning
+            # them to the start drew one Adam seed's epochs 14 to 20 as 1 to 7.
+            arr[i, width - len(v):] = v
+        return arr
+
+    for base in BASES:
+        recs = _records("10_02_lr_retune", base, ds)
+        if not recs:
+            continue
+        stats[f"{ds}/{base}"] = final_means(recs)
+        arms: Dict[str, Dict[float, List]] = {"baseline": {}, "bograd": {}}
+        K = None
+        for r in recs:
+            head, _, lr_s = r.cell.rpartition("_lr")
+            try:
+                lr = float(lr_s)
+            except ValueError:
                 continue
-            stats[f"{ds}/{base}"] = final_means(recs)
-            arms: Dict[str, Dict[float, List]] = {"baseline": {}, "bograd": {}}
-            for r in recs:
-                if "_lr" not in r.cell:
-                    continue
-                head, _, lr_s = r.cell.rpartition("_lr")
-                try:
-                    lr = float(lr_s)
-                except ValueError:
-                    continue
-                arm = "baseline" if head.startswith("baseline") else "bograd"
-                arms[arm].setdefault(lr, []).append(r)
-            basin[(ds, base)] = {
-                arm: {lr: float(np.mean([max(x.acc) if x.acc else float("nan")
-                                         for x in rs]))
-                      for lr, rs in sorted(by_lr.items())}
-                for arm, by_lr in arms.items()}
-            # curves at each arm's own best rate
-            panel = {}
-            for arm, by_lr in arms.items():
-                if not by_lr:
-                    continue
-                best_lr = max(by_lr, key=lambda lr: basin[(ds, base)][arm][lr])
-                panel[f"{arm} (lr {best_lr:g})"] = {
-                    "acc": [x.acc for x in by_lr[best_lr] if x.acc],
-                    "loss": [x.loss for x in by_lr[best_lr] if x.loss]}
-            best_curves.append((f"{ANCHOR_SHORT.get(ds, ds)} — {base}", panel))
+            arm = "baseline" if head.startswith("baseline") else "bograd"
+            if arm == "bograd" and head.startswith("bograd_K"):
+                K = head[len("bograd_K"):]
+            arms[arm].setdefault(lr, []).append(r)
+        if not arms["baseline"] or not arms["bograd"]:
+            continue
 
-    if not basin:
+        width = max(len(r.acc) for r in recs if r.acc)
+        acc = {a: {lr: seed_array(rs, "acc", width) for lr, rs in d.items()}
+               for a, d in arms.items()}
+        loss = {a: {lr: seed_array(rs, "loss", width) for lr, rs in d.items()}
+                for a, d in arms.items()}
+
+        # one common bar per base: 99% of the best final accuracy of any cell
+        finals = {(a, lr): float(np.nanmean(v[:, -1]))
+                  for a, d in acc.items() for lr, v in d.items()}
+        target = 0.99 * max(finals.values())
+
+        def speed(a, lr):
+            per_seed = []
+            for c in acc[a][lr]:
+                # NaN marks an epoch this seed did not log. It is skipped, not
+                # compacted out, so a resumed seed keeps its true epoch numbers
+                hit = epochs_to_target(list(c), target)
+                per_seed.append(hit if hit is not None else len(c) + 1)
+            return float(np.mean(per_seed)), per_seed
+
+        table = {}
+        for a in ("baseline", "bograd"):
+            table[a] = {}
+            for lr in sorted(acc[a]):
+                mean_ep, per_seed = speed(a, lr)
+                table[a][lr] = dict(
+                    epochs=mean_ep, per_seed=per_seed,
+                    reached=sum(e <= acc[a][lr].shape[1] for e in per_seed),
+                    final=finals[(a, lr)],
+                    auc=float(np.nanmean(np.nanmean(acc[a][lr], axis=0))),
+                    partial=int(np.isnan(acc[a][lr][:, 0]).sum()))
+        base_lr = min(table["baseline"],
+                      key=lambda lr: (table["baseline"][lr]["epochs"],
+                                      -table["baseline"][lr]["auc"]))
+        summary[base] = dict(
+            target=target, K=K, baseline_lr=base_lr,
+            baseline={f"{lr:g}": v for lr, v in table["baseline"].items()},
+            bograd={f"{lr:g}": v for lr, v in table["bograd"].items()})
+        rows.append((base, K, base_lr, acc, loss, table, target))
+
+    if not rows:
         print("  lr: no results — skipped")
         return None
 
-    # (a) the basin
-    keys = [k for k in basin if basin[k]]
-    nrows, ncols = len(ANCHORS), len(BASES)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(3.4 * ncols, 3.4 * nrows),
+    fig, axes = plt.subplots(len(rows), 2, figsize=(10.5, 2.95 * len(rows)),
                              squeeze=False)
-    for i, ds in enumerate(ANCHORS):
-        for j, base in enumerate(BASES):
-            ax = axes[i][j]
-            d = basin.get((ds, base))
-            if not d:
-                ax.axis("off"); continue
-            for arm, style in (("baseline", BASELINE_STYLE),
-                               ("bograd", dict(color="#1f77b4", linewidth=2.0))):
-                pts = d.get(arm) or {}
-                if pts:
-                    xs = sorted(pts)
-                    ax.plot(xs, [pts[x] for x in xs], marker="o", markersize=4,
-                            label="baseline" if arm == "baseline" else "BOGrad",
-                            **style)
-            ax.set_xscale("log")
-            ax.set_title(f"{ANCHOR_SHORT.get(ds, ds)} — {base}", fontsize=11)
-            ax.set_xlabel("learning rate"); ax.set_ylabel("best test accuracy")
-            if i == 0 and j == 0:
-                ax.legend(fontsize=9)
-    out = outdir / "ax_lr_basin"
+    cmap = plt.get_cmap("viridis")
+    for i, (base, K, base_lr, acc, loss, table, target) in enumerate(rows):
+        lrs = sorted(acc["bograd"])
+        colour = {lr: cmap(0.05 + 0.82 * j / max(1, len(lrs) - 1))
+                  for j, lr in enumerate(lrs)}
+        name = f"{pretty.get(base, base)}, BOGrad $K = {K}$"
+        for col, (curves, ylabel) in enumerate(((acc, "test accuracy"),
+                                                (loss, "training loss"))):
+            ax = axes[i][col]
+            top = 0.0
+            for lr in lrs:
+                arr = curves["bograd"][lr]
+                if arr is None:
+                    continue
+                m = np.nanmean(arr, axis=0)
+                x = np.arange(1, len(m) + 1)
+                ax.plot(x, m, color=colour[lr], linewidth=1.6,
+                        label=f"BOGrad, lr {lr:g}")
+                if col == 1 and np.isfinite(m).any():
+                    top = max(top, float(np.nanmax(m)))
+            arr = curves["baseline"][base_lr]
+            m = np.nanmean(arr, axis=0)
+            s = np.nanstd(arr, axis=0)
+            x = np.arange(1, len(m) + 1)
+            ax.plot(x, m, label=f"baseline, lr {base_lr:g}", **BASELINE_STYLE)
+            ax.fill_between(x, m - s, m + s, color=BASELINE_STYLE["color"],
+                            alpha=0.12, linewidth=0)
+            if col == 0:
+                ax.axhline(target, color="0.6", linestyle=":", linewidth=1.0,
+                           zorder=0)
+            else:
+                # a diverging rate sends its loss off the top; hold the axis to
+                # the range where the trained curves are distinguishable
+                top = max(top, float(np.nanmax(m)))
+                ax.set_ylim(0.0, min(top, 2.5) * 1.05)
+            ax.set_title(name, fontsize=10)
+            ax.set_xlabel("epoch")
+            ax.set_ylabel(ylabel)
+            ax.grid(alpha=0.3)
+            if col == 1:
+                # outside the axes: inside, it sat on top of the loss curves
+                ax.legend(fontsize=7.5, loc="upper left",
+                          bbox_to_anchor=(1.02, 1.0), frameon=False)
+
+    fig.tight_layout()
+    out = outdir / "ax_lr_curves"
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out.with_suffix(".pdf"), bbox_inches="tight")
-    fig.savefig(out.with_suffix(".png"), bbox_inches="tight")
+    fig.savefig(out.with_suffix(".png"), dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"wrote {out.with_suffix('.pdf')}")
 
-    # (b) curves at each arm's own best rate
-    order = sorted({k for _t, p in best_curves for k in p})
-    plot_grid(best_curves, outdir / "ax_lr_best", ncols=len(BASES), which="acc",
-              order=order, baseline_key="__none__")
+    for base, K, base_lr, acc, loss, table, target in rows:
+        print(f"\n  {base} (K={K})  target {target:.4f}  ideal baseline lr {base_lr:g}")
+        for a in ("baseline", "bograd"):
+            for lr, v in table[a].items():
+                mark = "  <- drawn" if a == "baseline" and lr == base_lr else ""
+                cens = "" if v["reached"] == len(v["per_seed"]) else "*"
+                if v["partial"]:
+                    mark += "  (%d seed resumed, early epochs unlogged)" % v["partial"]
+                print(f"    {a:8s} lr {lr:<7g} {v['epochs']:5.1f}{cens:1s} "
+                      f"{str(v['per_seed']):14s} final {v['final']:.4f} "
+                      f"auc {v['auc']:.4f}{mark}")
+    (_HERE / "lr_curves.json").write_text(json.dumps(summary, indent=2))
     return stats
 
 
@@ -330,7 +420,16 @@ def main():
             allstats[key] = s
 
     out = _HERE / "curve_stats.json"
-    out.write_text(json.dumps(allstats, indent=2))
+    # Merge rather than overwrite: plotting one axis used to erase every other
+    # axis's statistics from this file.
+    merged = {}
+    if out.exists():
+        try:
+            merged = json.loads(out.read_text())
+        except Exception:
+            merged = {}
+    merged.update(allstats)
+    out.write_text(json.dumps(merged, indent=2))
     print(f"\nwrote {out}")
     for axis, per in allstats.items():
         print(f"\n=== {axis} (final test accuracy, mean +/- std) ===")
