@@ -212,7 +212,7 @@ def _timing_table(rows: List[dict], datasets: Sequence[str]) -> Optional[str]:
     present = [d for d in datasets if any(r.get("dataset") == d for r in rows)]
     if not present:
         return None
-    methods = ["cosgd", "bograd", "graddrop", "dropout"]
+    methods = ["cosgd", "bograd", "dropout"]
     out = [r"\begin{tabular}{ll" + "r" * len(present) + "}", r"\hline",
            "base & method & " + " & ".join(DS_LABEL.get(d, d) for d in present) + r" \\",
            r"\hline"]

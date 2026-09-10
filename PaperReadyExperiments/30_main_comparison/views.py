@@ -37,7 +37,9 @@ from common.storage import read_json, write_json_atomic   # noqa: E402
 from common.plotting import apply_thesis_rcparams, PALETTE, METHOD_STYLE  # noqa: E402
 from _summary_utils import TARGET_FRAC                    # noqa: E402
 
-METHOD_ORDER = ["baseline", "cosgd", "bograd", "graddrop", "dropout"]
+# GradDrop was run as an arm but is not part of the study. `_group` drops any
+# method not listed here, so its cells stay in the record set and out of every view.
+METHOD_ORDER = ["baseline", "cosgd", "bograd", "dropout"]
 
 
 def _resolve_campaign(arg: Optional[str]) -> Path:
@@ -71,6 +73,8 @@ def _group(rows):
     """(dataset) -> (base, method) -> list of seed rows."""
     g: Dict[str, Dict[tuple, List[Dict]]] = defaultdict(lambda: defaultdict(list))
     for r in rows:
+        if r["method"] not in METHOD_ORDER:
+            continue
         g[r["dataset"]][(r["base"], r["method"])].append(r)
     return g
 
@@ -98,7 +102,7 @@ def view_trajectories(campaign, grouped):
                     label=f"{base}+{method}")
             ax.fill_between(x, mean - std, mean + std, color=PALETTE.get(base), alpha=0.12)
         ax.set_xlabel("epoch"); ax.set_ylabel("test accuracy")
-        ax.set_title(f"30.01  {dataset} — test-accuracy trajectories")
+        ax.set_title(f"30.01  {dataset}: test-accuracy trajectories")
         ax.legend(fontsize=7, ncol=2)
         out = campaign / f"30_01_trajectories_{dataset}.png"
         fig.savefig(out, bbox_inches="tight"); plt.close(fig)
@@ -150,17 +154,17 @@ def view_final_bars(campaign, grouped):
     for dataset, cells in grouped.items():
         bases = sorted({b for b, _ in cells})
         fig, ax = plt.subplots(figsize=(9, 5))
-        width = 0.15
+        width = 0.8 / len(METHOD_ORDER)
         x = np.arange(len(bases))
         for mi, method in enumerate(METHOD_ORDER):
             means, stds = [], []
             for base in bases:
                 m, s, _ = _mean_std([r.get("final_test_acc") for r in cells.get((base, method), [])])
                 means.append(m); stds.append(s)
-            ax.bar(x + (mi - 2) * width, means, width, yerr=stds, capsize=2,
-                   label=method, linestyle=METHOD_STYLE.get(method))
+            ax.bar(x + (mi - (len(METHOD_ORDER) - 1) / 2) * width, means, width, yerr=stds,
+                   capsize=2, label=method, linestyle=METHOD_STYLE.get(method))
         ax.set_xticks(x); ax.set_xticklabels(bases)
-        ax.set_ylabel("final test accuracy"); ax.set_title(f"30.03  {dataset} — final accuracy")
+        ax.set_ylabel("final test accuracy"); ax.set_title(f"30.03  {dataset}: final accuracy")
         ax.legend(fontsize=8, ncol=3)
         out = campaign / f"30_03_final_bars_{dataset}.png"
         fig.savefig(out, bbox_inches="tight"); plt.close(fig)
@@ -171,7 +175,7 @@ def view_final_bars(campaign, grouped):
 def view_pareto(campaign, grouped):
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     apply_thesis_rcparams("dense")
-    markers = {"baseline": "o", "cosgd": "s", "bograd": "^", "graddrop": "D", "dropout": "v"}
+    markers = {"baseline": "o", "cosgd": "s", "bograd": "^", "dropout": "v"}
     for dataset, cells in grouped.items():
         pts = []
         fig, ax = plt.subplots(figsize=(8, 5.5))
@@ -193,7 +197,7 @@ def view_pareto(campaign, grouped):
             fx, fy = zip(*frontier)
             ax.plot(fx, fy, "k--", alpha=0.5, label="Pareto frontier")
         ax.set_xscale("log"); ax.set_xlabel("sec / step (log)"); ax.set_ylabel("final test accuracy")
-        ax.set_title(f"30.09  {dataset} — accuracy vs wall-clock")
+        ax.set_title(f"30.09  {dataset}: accuracy vs wall-clock")
         ax.legend(fontsize=6, ncol=2)
         out = campaign / f"30_09_pareto_{dataset}.png"
         fig.savefig(out, bbox_inches="tight"); plt.close(fig)
@@ -235,7 +239,7 @@ def view_speedup(campaign, grouped, target_frac=TARGET_FRAC):
         out_md.append("|" + "---|" * (len(METHOD_ORDER) + 2))
         # bar fig: speed-up per (base, method)
         fig, ax = plt.subplots(figsize=(9, 5))
-        width = 0.15; x = np.arange(len(bases))
+        width = 0.8 / len(METHOD_ORDER); x = np.arange(len(bases))
         for dataset_method_i, method in enumerate(METHOD_ORDER):
             speedups = []
             for base in bases:
@@ -261,11 +265,12 @@ def view_speedup(campaign, grouped, target_frac=TARGET_FRAC):
                     "wall_speedup": float(wall_sp) if wall_sp else None,
                     "epoch1_acc": float(np.mean([c[0] for c in meth_curves])),
                 }
-            ax.bar(x + (dataset_method_i - 2) * width, [s if s == s else 0 for s in speedups],
+            ax.bar(x + (dataset_method_i - (len(METHOD_ORDER) - 1) / 2) * width,
+                   [s if s == s else 0 for s in speedups],
                    width, label=method, linestyle=METHOD_STYLE.get(method))
         ax.axhline(1.0, color="black", lw=0.8, ls="--", label="baseline (1.0x)")
         ax.set_xticks(x); ax.set_xticklabels(bases)
-        ax.set_ylabel("epoch speed-up vs baseline"); ax.set_title(f"30.00  {dataset} — convergence speed-up")
+        ax.set_ylabel("epoch speed-up vs baseline"); ax.set_title(f"30.00  {dataset}: convergence speed-up")
         ax.legend(fontsize=8, ncol=3)
         out = campaign / f"30_00_speedup_{dataset}.png"
         fig.savefig(out, bbox_inches="tight"); plt.close(fig)

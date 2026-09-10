@@ -55,7 +55,7 @@ for p in (str(_REPO), str(_PRE)):
 from common.storage import read_json, write_json_atomic, get_results_root  # noqa: E402
 
 BASES = ["sgd", "signsgd", "rmsprop", "adam"]
-METHODS = ["cosgd", "bograd", "graddrop", "dropout"]
+METHODS = ["cosgd", "bograd", "dropout"]
 FRACTIONS = [0.2, 0.5, 1.0]
 
 
