@@ -31,7 +31,8 @@ for p in (str(_REPO), str(_PRE)):
         sys.path.insert(0, p)
 
 from common import storage                                   # noqa: E402
-from _curves import load_axis, group, final_means, plot_axis, plot_grid  # noqa: E402
+from _curves import (load_axis, group, final_means, plot_axis, plot_grid,  # noqa: E402
+                     speed_table, epochs_to_target)
 from pick_lr import best_rates                              # noqa: E402
 
 # The two anchors of Chapters 4 and 5. Everything else in results/ is from
@@ -190,11 +191,28 @@ def do_axis(key: str, outdir: Path, quiet: bool = False) -> Optional[dict]:
     return stats
 
 
+def _right_align(recs) -> None:
+    """Pad a resumed run's history at the front, in place.
+
+    A run resumed from a checkpoint logs only the epochs after the resume
+    point, and those are the last epochs of the run. `curve_stats` pads at the
+    end instead, which drew one batch-64 baseline seed's epochs 12 to 20 as
+    epochs 1 to 9 and let it reach the target in its first logged epoch.
+    """
+    width = max((len(r.acc) for r in recs), default=0)
+    for r in recs:
+        for name in ("acc", "loss"):
+            v = getattr(r, name)
+            if v and len(v) < width:
+                setattr(r, name, [float("nan")] * (width - len(v)) + list(v))
+
+
 def do_hyper_axis(key: str, outdir: Path) -> Optional[dict]:
     """Cells are labelled '<value>_baseline' / '<value>_cosgd'. One panel per
     value, rows are the anchors, and each panel holds the matched pair."""
     spec = HYPER_AXES[key]
     cells, stats = [], {}
+    speed: Dict[str, Dict[str, dict]] = {}
     by_anchor: Dict[str, list] = {ds: [] for ds in ANCHORS}
     for ds in ANCHORS:
         recs = []
@@ -203,6 +221,7 @@ def do_hyper_axis(key: str, outdir: Path) -> Optional[dict]:
             recs.extend(load_axis(d, require_lr=lr_filter))
         if not recs:
             continue
+        _right_align(recs)
         stats[ds] = final_means(recs)
         by_value: Dict[str, List] = {}
         for r in recs:
@@ -211,16 +230,37 @@ def do_hyper_axis(key: str, outdir: Path) -> Optional[dict]:
                 continue
             r.cell = arm
             by_value.setdefault(value, []).append(r)
+        speed[ds] = {}
         for value in _sorted_numeric(list(by_value), key):
             if value == "baseline" or value not in by_value:
                 continue
-            title = f"{ANCHOR_TITLE.get(ds, ds).split(' (')[0]} — {spec['label'](value)}"
-            panel = (title, group(by_value[value]))
+            curves = group(by_value[value])
+            # each value is ranked against its own matched baseline, as on
+            # every other axis
+            table = speed_table(curves)
+            target = table.get("__target__", {}).get("value")
+            for arm in ("baseline", "cosgd"):
+                if arm in table and target is not None:
+                    table[arm]["per_seed"] = [epochs_to_target(c, target) or (len(c) + 1)
+                                              for c in curves[arm]["acc"]]
+            speed[ds][value] = table
+            title = f"{ANCHOR_TITLE.get(ds, ds).split(' (')[0]}: {spec['label'](value)}"
+            panel = (title, curves)
             cells.append(panel)
             by_anchor[ds].append(panel)
     if not cells:
         print(f"  {key}: no results — skipped")
         return None
+    (_HERE / f"{spec['fig']}_speed.json").write_text(json.dumps(speed, indent=1))
+    for ds, per in speed.items():
+        print(f"  {ds}: epochs to 99% of the matched baseline's final accuracy")
+        for value, t in per.items():
+            b, c = t.get("baseline", {}), t.get("cosgd", {})
+            print(f"    {value:<6} target {t['__target__']['value']:.4f}  "
+                  f"baseline {b.get('epochs', float('nan')):5.1f} {b.get('per_seed')}  "
+                  f"COSGD {c.get('epochs', float('nan')):5.1f} {c.get('per_seed')}  "
+                  f"speed-up {c.get('speedup', float('nan')):.2f}  finals "
+                  f"{b.get('final', float('nan')):.4f} / {c.get('final', float('nan')):.4f}")
     # One figure per anchor: a single grid holding both would be twelve panels
     # wide and unreadable at text width.
     for ds, panels in by_anchor.items():
