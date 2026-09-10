@@ -1,19 +1,23 @@
 """
 30 — bakeoff VIEWS (pure presentation; reads the canonical record set, never trains).
 
-Produces, from a bakeoff campaign's all_rows.json (or per-cell cell_*.json):
+Produces, from a bakeoff campaign's per-cell cell_*.json files (or all_rows.json):
 
-  30.01  test-accuracy trajectories per dataset  (line plot per dataset; one line
-         per (base x method), mean +/- std band across seeds)
+  30.00  convergence speed-up per dataset        (grouped bars per base optimiser)
+  30.01  training trajectories per dataset       (one row per base optimiser: test
+         accuracy and training loss against epoch, the baseline and every method
+         arm, mean +/- std band across seeds)
   30.02  fixed-budget accuracy tables            (acc at 10/50/100% of epochs;
          rows = dataset x base, cols = method; mean +/- std; markdown + json)
   30.03  final-accuracy summary bars             (grouped bars per dataset)
   30.09  accuracy-vs-wall-clock Pareto           (scatter per dataset; colour=base,
          marker=method; Pareto frontier overlaid)
+  30.10  results table per dataset               (LaTeX, two panels: accuracy and
+         loss, then convergence and cost)
 
 Usage:
     python views.py --campaign _core/results/run_<id>            # all views
-    python views.py --campaign ... --only 01 03
+    python views.py --campaign ... --only 01 10
 """
 
 from __future__ import annotations
@@ -36,10 +40,23 @@ for p in (str(_REPO), str(_PRE)):
 from common.storage import read_json, write_json_atomic   # noqa: E402
 from common.plotting import apply_thesis_rcparams, PALETTE, METHOD_STYLE  # noqa: E402
 from _summary_utils import TARGET_FRAC                    # noqa: E402
+from _curves import BASELINE_STYLE                        # noqa: E402
 
 # GradDrop was run as an arm but is not part of the study. `_group` drops any
 # method not listed here, so its cells stay in the record set and out of every view.
 METHOD_ORDER = ["baseline", "cosgd", "bograd", "dropout"]
+
+# Order and names used by the thesis figures and tables (30.01, 30.10).
+BASE_ORDER = ["sgd", "signsgd", "rmsprop", "adam"]
+BASE_NAME = {"sgd": "SGD", "signsgd": "SignSGD", "rmsprop": "RMSprop", "adam": "Adam"}
+METHOD_NAME = {"baseline": "Baseline", "cosgd": "COSGD", "bograd": "BOGrad",
+               "dropout": "Dropout"}
+DATASET_NAME = {"mnist": "MNIST", "emnist_balanced": "EMNIST-Balanced",
+                "cifar10": "CIFAR-10", "cifar100": "CIFAR-100",
+                "covertype": "Covertype", "yahoo_answers": "Yahoo!~Answers"}
+# The baseline is drawn in the dashed dark grey of Chapters 4 and 5.
+METHOD_COLOUR = {"cosgd": "#1f77b4", "bograd": "#d62728", "dropout": "#2ca02c"}
+_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
 
 
 def _resolve_campaign(arg: Optional[str]) -> Path:
@@ -84,29 +101,124 @@ def _mean_std(vals):
     return (float(np.mean(vals)), float(np.std(vals)), len(vals)) if vals else (float("nan"), float("nan"), 0)
 
 
+def _history(rs, key) -> np.ndarray:
+    """Seeds x epochs array of one per-epoch history, NaN where nothing was logged.
+
+    A run resumed from a checkpoint logs only the epochs after the resume point,
+    and those are the last epochs of the run, so a short history is padded at the
+    front. Truncating every seed to the shortest, as these views once did, drew a
+    resumed Yahoo! Answers seed's epochs 5 to 15 as epochs 1 to 11.
+    """
+    width = max(int(r.get("total_epochs") or len(r.get(key) or [])) for r in rs)
+    M = np.full((len(rs), width), np.nan)
+    for i, r in enumerate(rs):
+        v = np.asarray(r.get(key) or [], dtype=float)[-width:]
+        if v.size:
+            M[i, width - v.size:] = v
+    return M
+
+
+def _budget_epoch(n_epochs: int, frac: float) -> int:
+    """The 1-based epoch that stands for `frac` of an `n_epochs` budget."""
+    return max(1, int(round(frac * n_epochs)))
+
+
+def _plain_log_axis(ax) -> None:
+    """Log-scale y axis labelled in plain decimals (0.5, 1, 2), not powers of ten.
+
+    The tick density follows the span of the data: a narrow panel gets steps of
+    1, 1.5, 2, 3, 5 and 7 so that it carries at least two labels, and a panel
+    spanning more than about a decade and a half keeps only the powers of ten.
+    """
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
+    ax.set_yscale("log")
+    lo, hi = ax.get_ylim()
+    ratio = hi / lo
+    subs = (1.0,) if ratio > 50 else (1.0, 2.0, 5.0) if ratio > 4 else (1.0, 1.5, 2.0, 3.0, 5.0, 7.0)
+    ax.yaxis.set_major_locator(LogLocator(base=10, subs=subs))
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
+    ax.yaxis.set_minor_formatter(NullFormatter())
+
+
+def _speed(cells, base, method, target_frac=TARGET_FRAC) -> Optional[Dict[str, Any]]:
+    """Epochs to `target_frac` x the baseline's mean final accuracy, and the speed-up.
+
+    A seed that never reaches the target is charged the budget plus one. A seed
+    with unlogged epochs is left out, since it may have reached the target in one
+    of them; `complete` counts the seeds that were used.
+    """
+    base_rows, rows = cells.get((base, "baseline"), []), cells.get((base, method), [])
+    if not base_rows or not rows:
+        return None
+    base_acc = _history(base_rows, "epoch_test_acc")
+    target = target_frac * float(np.mean(base_acc[:, -1]))
+
+    def per_seed(M):
+        out = []
+        for seed in M:
+            if np.isnan(seed).any():
+                continue
+            hit = np.flatnonzero(seed >= target)
+            out.append(float(hit[0] + 1) if hit.size else float(len(seed) + 1))
+        return out
+
+    acc = _history(rows, "epoch_test_acc")
+    b_eps, m_eps = per_seed(base_acc), per_seed(acc)
+    if not b_eps or not m_eps:
+        return None
+    return {"target": target,
+            "baseline_epochs": float(np.mean(b_eps)),
+            "epochs": float(np.mean(m_eps)), "epochs_std": float(np.std(m_eps)),
+            "per_seed": m_eps,
+            "reached": sum(e <= acc.shape[1] for e in m_eps),
+            "complete": len(m_eps), "n": acc.shape[0],
+            "speedup": float(np.mean(b_eps)) / float(np.mean(m_eps))}
+
+
 # ---- 30.01 trajectories ----------------------------------------------------
 def view_trajectories(campaign, grouped):
+    """One figure per dataset. Each row is a base optimiser; the left panel is test
+    accuracy and the right training loss on a log scale. The baseline is dashed,
+    each method arm a solid line, with the mean over seeds and a +/- std band."""
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     apply_thesis_rcparams("dense")
+    plt.rcParams.update({"font.size": 10, "axes.titlesize": 10.5, "axes.labelsize": 10,
+                         "xtick.labelsize": 9, "ytick.labelsize": 9, "legend.fontsize": 10})
+    panels = (("epoch_test_acc", "test accuracy"), ("epoch_train_loss", "training loss"))
     for dataset, cells in grouped.items():
-        fig, ax = plt.subplots(figsize=(8, 5.5))
-        for (base, method), rs in sorted(cells.items()):
-            curves = [r.get("epoch_test_acc", []) for r in rs if r.get("epoch_test_acc")]
-            if not curves:
-                continue
-            n = min(len(c) for c in curves)
-            M = np.stack([np.asarray(c[:n]) for c in curves], 0)
-            x = np.arange(1, n + 1)
-            mean, std = M.mean(0), M.std(0)
-            ax.plot(x, mean, color=PALETTE.get(base), linestyle=METHOD_STYLE.get(method),
-                    label=f"{base}+{method}")
-            ax.fill_between(x, mean - std, mean + std, color=PALETTE.get(base), alpha=0.12)
-        ax.set_xlabel("epoch"); ax.set_ylabel("test accuracy")
-        ax.set_title(f"30.01  {dataset}: test-accuracy trajectories")
-        ax.legend(fontsize=7, ncol=2)
-        out = campaign / f"30_01_trajectories_{dataset}.png"
-        fig.savefig(out, bbox_inches="tight"); plt.close(fig)
-        print(f"  wrote {out}")
+        bases = [b for b in BASE_ORDER if (b, "baseline") in cells]
+        # sized so a figure, its heading and a short paragraph share one page
+        fig, axes = plt.subplots(len(bases), 2, figsize=(7.2, 1.35 * len(bases)),
+                                 sharex=True, squeeze=False)
+        for row, base in enumerate(bases):
+            for col, (key, what) in enumerate(panels):
+                ax = axes[row][col]
+                for method in METHOD_ORDER:
+                    rs = cells.get((base, method))
+                    if not rs:
+                        continue
+                    M = _history(rs, key)
+                    x = np.arange(1, M.shape[1] + 1)
+                    mean, std = np.nanmean(M, axis=0), np.nanstd(M, axis=0)
+                    style = (dict(BASELINE_STYLE, linewidth=1.8) if method == "baseline"
+                             else dict(color=METHOD_COLOUR[method], linewidth=1.5))
+                    ax.plot(x, mean, label=METHOD_NAME[method], **style)
+                    ax.fill_between(x, mean - std, mean + std, color=style["color"],
+                                    alpha=0.12, linewidth=0)
+                    ax.set_xlim(1, M.shape[1])
+                if col == 1:
+                    _plain_log_axis(ax)
+                ax.set_title(f"{BASE_NAME[base]}: {what}")
+                if row == len(bases) - 1:
+                    ax.set_xlabel("epoch")
+        handles, labels = axes[0][0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="lower center", bbox_to_anchor=(0.5, 1.0),
+                   ncol=len(labels), frameon=False)
+        out = campaign / f"30_01_trajectories_{dataset}"
+        fig.savefig(out.with_suffix(".pdf"), bbox_inches="tight")
+        fig.savefig(out.with_suffix(".png"), dpi=150, bbox_inches="tight")
+        plt.close(fig)
+        print(f"  wrote {out.with_suffix('.pdf')}")
 
 
 # ---- 30.02 fixed-budget tables --------------------------------------------
@@ -125,13 +237,11 @@ def view_budget_tables(campaign, grouped):
                 cellvals = []
                 for method in METHOD_ORDER:
                     rs = cells.get((base, method), [])
-                    accs = []
-                    for r in rs:
-                        c = r.get("epoch_test_acc", [])
-                        if c:
-                            idx = max(0, int(round(frac * len(c))) - 1)
-                            accs.append(c[idx])
-                    m, s, n = _mean_std(accs)
+                    if rs:
+                        acc = _history(rs, "epoch_test_acc")
+                        m, s, n = _mean_std(acc[:, _budget_epoch(acc.shape[1], frac) - 1].tolist())
+                    else:
+                        m, s, n = float("nan"), float("nan"), 0
                     cellvals.append((method, m, s, n))
                     out_json[f"{frac_name}/{dataset}/{base}/{method}"] = {"mean": m, "std": s, "n": n}
                 best = max((v for v in cellvals if v[1] == v[1]), key=lambda v: v[1], default=None)
@@ -205,14 +315,6 @@ def view_pareto(campaign, grouped):
 
 
 # ---- 30.00 CONVERGENCE SPEED-UP (the headline metric) ---------------------
-def _epochs_to(curve, target):
-    """First (1-based) epoch at which curve reaches `target`, or None."""
-    for i, a in enumerate(curve):
-        if a is not None and a == a and a >= target:
-            return i + 1
-    return None
-
-
 def view_speedup(campaign, grouped, target_frac=TARGET_FRAC):
     """For each (dataset, base): how many epochs each method needs to reach the
     BASELINE's target accuracy, and the speed-up factor (baseline_epochs /
@@ -222,7 +324,7 @@ def view_speedup(campaign, grouped, target_frac=TARGET_FRAC):
     not 1.0: see _summary_utils.TARGET_FRAC for why matching the baseline's mean
     final accuracy exactly is an unstable target on a plateaued curve. Also
     reports epoch-1 accuracy (early-progress) and the steps-to-target speed-up
-    via mean step time.
+    via mean step time. The statistic itself is `_speed`, shared with 30.10.
     """
     import matplotlib; matplotlib.use("Agg"); import matplotlib.pyplot as plt
     apply_thesis_rcparams("dense")
@@ -243,27 +345,21 @@ def view_speedup(campaign, grouped, target_frac=TARGET_FRAC):
         for dataset_method_i, method in enumerate(METHOD_ORDER):
             speedups = []
             for base in bases:
-                base_rows = cells.get((base, "baseline"), [])
-                meth_rows = cells.get((base, method), [])
-                base_curves = [r.get("epoch_test_acc", []) for r in base_rows if r.get("epoch_test_acc")]
-                meth_curves = [r.get("epoch_test_acc", []) for r in meth_rows if r.get("epoch_test_acc")]
-                if not base_curves or not meth_curves:
+                s = _speed(cells, base, method, target_frac)
+                if s is None:
                     speedups.append(np.nan); continue
-                bmean = np.mean([c[-1] for c in base_curves])
-                tgt = target_frac * bmean
-                b_ep = np.mean([_epochs_to(c, tgt) or len(c) + 1 for c in base_curves])
-                m_ep = np.mean([_epochs_to(c, tgt) or len(c) + 1 for c in meth_curves])
-                sp = b_ep / m_ep if m_ep > 0 else np.nan
+                sp = s["speedup"]
                 speedups.append(sp)
                 # wall speed-up: fold in per-step cost
-                b_spt = _mean_std([r.get("mean_step_wall_time_s") for r in base_rows])[0]
-                m_spt = _mean_std([r.get("mean_step_wall_time_s") for r in meth_rows])[0]
+                b_spt = _mean_std([r.get("mean_step_wall_time_s") for r in cells[(base, "baseline")]])[0]
+                m_spt = _mean_std([r.get("mean_step_wall_time_s") for r in cells[(base, method)]])[0]
                 wall_sp = sp * (b_spt / m_spt) if (m_spt and b_spt and m_spt == m_spt) else None
                 out_json[f"{dataset}/{base}/{method}"] = {
-                    "epochs_to_target": float(m_ep), "baseline_epochs": float(b_ep),
-                    "epoch_speedup": float(sp) if sp == sp else None,
+                    "epochs_to_target": s["epochs"], "baseline_epochs": s["baseline_epochs"],
+                    "epoch_speedup": sp,
                     "wall_speedup": float(wall_sp) if wall_sp else None,
-                    "epoch1_acc": float(np.mean([c[0] for c in meth_curves])),
+                    "epoch1_acc": float(np.nanmean(
+                        _history(cells[(base, method)], "epoch_test_acc")[:, 0])),
                 }
             ax.bar(x + (dataset_method_i - (len(METHOD_ORDER) - 1) / 2) * width,
                    [s if s == s else 0 for s in speedups],
@@ -295,137 +391,157 @@ def view_speedup(campaign, grouped, target_frac=TARGET_FRAC):
     print(f"  wrote {campaign/'30_00_speedup.md'}")
 
 
-# ---- 30.10 FOGO-style master results table --------------------------------
-def _fmt(m, s, nd=3):
-    if m is None or m != m:
-        return "—"
-    return f"{m:.{nd}f}$\\pm${s:.{nd}f}" if (s == s and s > 0) else f"{m:.{nd}f}"
+# ---- 30.10 results table per dataset --------------------------------------
+def _column(M: np.ndarray, idx: int):
+    """(mean, std, partial) of one epoch column, over the seeds that logged it."""
+    col = M[:, idx]
+    col = col[~np.isnan(col)]
+    return float(col.mean()), float(col.std()), col.size < M.shape[0]
 
 
-def _acc_at(rs, frac):
-    vals = []
-    for r in rs:
-        c = r.get("epoch_test_acc", [])
-        if c:
-            idx = 0 if frac <= 0 else max(0, int(round(frac * len(c))) - 1)
-            vals.append(c[idx])
-    return _mean_std(vals)
+def _pm(stat, nd: int) -> str:
+    """'mean $\\pm$ std', with a dagger when some seed or epoch is missing from it."""
+    mean, std, partial = stat
+    return f"{mean:.{nd}f} $\\pm$ {std:.{nd}f}" + (r"$^{\dagger}$" if partial else "")
 
 
-def _latex_cell(c: str) -> str:
-    """Escape one table cell for LaTeX. _fmt already emits $\\pm$; here we fix
-    percent signs and turn a trailing speed-up 'x' into $\\times$."""
-    c = c.replace("%", r"\%").replace("→", r"$\to$")
-    body = c[:-1].replace(".", "").replace("-", "")
-    if c.endswith("x") and body.isdigit():
-        c = c[:-1] + r"$\times$"
-    return c
+def view_results_tables(campaign, grouped, target_frac=TARGET_FRAC):
+    """One LaTeX table per dataset holding every per-cell statistic.
 
+    Panel (a): test accuracy after a tenth and half of the epoch budget (the epochs
+    30.02 reads), at the final epoch and the best one, and final training loss.
+    Panel (b): the tuned learning rate with K or p; epochs to the speed-up target
+    of 30.00, the seeds reaching it and the speed-up; then per-step training
+    time, total wall-clock, peak GPU memory and BOGrad's buffer. Accuracy, loss
+    and epochs are mean +/- std over seeds. The cost columns are means, and the
+    largest relative spread among them over seeds is printed for the prose.
 
-def _write_fogo_latex(campaign, dataset, header, rows):
-    safe_ds = dataset.replace("_", r"\_")
-    spec = "l" + "r" * (len(header) - 1)
-    lines = [r"\begin{table}[htbp]", r"  \centering", r"  \small",
-             r"  \begin{tabular}{" + spec + "}", r"  \hline",
-             "  " + " & ".join(_latex_cell(h) for h in header) + r" \\",
-             r"  \hline"]
-    for row in rows:
-        cells = [(c.replace("_", r"\_") if i == 0 else _latex_cell(c)) for i, c in enumerate(row)]
-        lines.append("  " + " & ".join(cells) + r" \\")
-    lines += [r"  \hline", r"  \end{tabular}",
-              rf"  \caption{{Main comparison on {safe_ds}: per-method cost and "
-              r"convergence (mean $\pm$ std across seeds). PeakMem is the clean "
-              r"training peak GPU; Buf is the persistent BOGrad buffer; step is the "
-              r"per-step training time; ep$\to$base is epochs to the baseline's "
-              r"final accuracy; speed-up is baseline/method epochs.}",
-              rf"  \label{{tab:experiments:fogo_{dataset}}}", r"\end{table}"]
-    (campaign / f"30_10_fogo_table_{dataset}.tex").write_text("\n".join(lines), encoding="utf-8")
-
-
-def view_fogo_table(campaign, grouped):
-    """30.10 — the headline FOGO-style table. Per (dataset x base x method),
-    mean +/- std across seeds of: param count, clean peak training memory,
-    persistent buffer memory, clean per-step time, total wall-clock, early and
-    final accuracy, epochs-to-baseline, and convergence speed-up. Markdown + JSON
-    + a drop-in LaTeX table per dataset."""
-    header = ["base+method", "Params(M)", "PeakMem(MB)", "Buf(MB)", "step(ms)",
-              "Time(min)", "acc@1", "acc@50%", "best acc", "final acc", "ep→base", "speed-up"]
-    out_md = ["# 30.10 FOGO-style results table\n",
-              "Mean$\\pm$std across seeds. PeakMem = clean training peak GPU; "
-              "Buf = persistent BOGrad buffer (K x params x 4B); step = clean "
-              "per-step training time; Time = total wall-clock; ep->base = epochs "
-              "to reach the base's baseline final accuracy; speed-up = "
-              "baseline_epochs / method_epochs.\n"]
+    The columns are defined once in the thesis text, so each caption stays short.
+    """
     out_json: Dict[str, Any] = {}
-
+    spread = (0.0, "")
     for dataset, cells in sorted(grouped.items()):
-        bases = sorted({b for b, _ in cells})
-        out_md.append(f"\n## {dataset}\n")
-        out_md.append("| " + " | ".join(header) + " |")
-        out_md.append("|" + "---|" * len(header))
-        latex_rows: List[List[str]] = []
-        for base in bases:
-            base_rows = cells.get((base, "baseline"), [])
-            base_curves = [r.get("epoch_test_acc", []) for r in base_rows if r.get("epoch_test_acc")]
-            base_final = float(np.mean([c[-1] for c in base_curves])) if base_curves else float("nan")
-            b_ep = (float(np.mean([_epochs_to(c, base_final) or len(c) + 1 for c in base_curves]))
-                    if base_curves else float("nan"))
-            for method in METHOD_ORDER:
-                rs = cells.get((base, method), [])
-                if not rs:
-                    continue
-                pm = _mean_std([r.get("n_params") for r in rs])
+        bases = [b for b in BASE_ORDER if (b, "baseline") in cells]
+        first = next(iter(cells.values()))[0]
+        n_epochs = int(first["total_epochs"])
+        steps_per_epoch = int(first["total_steps"]) // n_epochs
+        n_seeds = max(len(rs) for rs in cells.values())
+        e_lo, e_mid = _budget_epoch(n_epochs, 0.1), _budget_epoch(n_epochs, 0.5)
+        step_max = max(_mean_std([r.get("mean_train_step_s") for r in rs])[0] for rs in cells.values())
+        nd_step = 2 if step_max * 1000 < 20 else 1
+
+        rows_a: List[str] = []
+        rows_b: List[str] = []
+        gaps: List[str] = []
+        for bi, base in enumerate(bases):
+            methods = [m for m in METHOD_ORDER if (base, m) in cells]
+            speeds = {m: _speed(cells, base, m, target_frac) for m in methods}
+            top = max(round(s["speedup"], 2) for s in speeds.values())
+            if bi:
+                rows_a.append(r"\midrule")
+                rows_b.append(r"\midrule")
+            for mi, method in enumerate(methods):
+                rs = cells[(base, method)]
+                acc = _history(rs, "epoch_test_acc")
+                loss = _history(rs, "epoch_train_loss")
+                missing = np.isnan(acc).sum(axis=1)
+                for r, k in zip(rs, missing):
+                    if k:
+                        gaps.append(f"one {METHOD_NAME[method]} seed under {BASE_NAME[base]} "
+                                    f"was resumed from a checkpoint and did not log its "
+                                    f"first {_WORDS[k] if k < 10 else k} epochs")
+                best = np.nanmax(acc, axis=1)
+                stats_a = {"acc_lo": _column(acc, e_lo - 1), "acc_mid": _column(acc, e_mid - 1),
+                           "acc_final": _column(acc, -1),
+                           "acc_best": (float(best.mean()), float(best.std()), bool(missing.any())),
+                           "loss_final": _column(loss, -1)}
+                label = [BASE_NAME[base] if mi == 0 else "", METHOD_NAME[method]]
+                rows_a.append(" & ".join(label + [_pm(stats_a[k], 3) for k in stats_a]) + r" \\")
+
+                s = speeds[method]
+                hp = rs[0].get("hp") or {}
+                knob = {"bograd": f"{hp.get('K')}",
+                        "dropout": f"{hp.get('dropout_p', float('nan')):g}"}.get(method, "--")
+                step = _mean_std([r.get("mean_train_step_s") for r in rs])
+                total = _mean_std([r.get("total_wall_time_s") for r in rs])
                 peak = _mean_std([r.get("peak_mem_mb") for r in rs])
-                step = _mean_std([(r.get("mean_train_step_s") or r.get("mean_step_wall_time_s"))
-                                  for r in rs])
-                tmin = _mean_std([(r.get("total_wall_time_s") or float("nan")) / 60.0 for r in rs])
-                best = _mean_std([r.get("best_test_acc") for r in rs])
-                final = _mean_std([r.get("final_test_acc") for r in rs])
-                a1 = _acc_at(rs, 0.0)
-                a50 = _acc_at(rs, 0.5)
-                m_eps = [(_epochs_to(c, base_final) or len(c) + 1)
-                         for c in (r.get("epoch_test_acc", []) for r in rs)
-                         if c and base_final == base_final]
-                m_ep = float(np.mean(m_eps)) if m_eps else float("nan")
-                speed = (b_ep / m_ep) if (m_ep and m_ep == m_ep and b_ep == b_ep and m_ep > 0) else float("nan")
-                buf = 0.0
-                if method == "bograd":
-                    K = (rs[0].get("hp") or {}).get("K")
-                    if K and pm[0] == pm[0]:
-                        buf = K * pm[0] * 4 / 1e6
-                params_M = pm[0] / 1e6 if pm[0] == pm[0] else float("nan")
-                step_ms = (step[0] * 1000, step[1] * 1000) if step[0] == step[0] else (float("nan"), 0.0)
-                row = [
-                    f"{base}+{method}",
-                    f"{params_M:.2f}" if params_M == params_M else "—",
-                    _fmt(peak[0], peak[1], 1),
-                    f"{buf:.1f}" if buf else "0",
-                    _fmt(step_ms[0], step_ms[1], 2),
-                    _fmt(tmin[0], tmin[1], 1),
-                    _fmt(a1[0], a1[1]),
-                    _fmt(a50[0], a50[1]),
-                    _fmt(best[0], best[1]),
-                    _fmt(final[0], final[1]),
-                    f"{m_ep:.1f}" if m_ep == m_ep else "—",
-                    f"{speed:.2f}x" if speed == speed else "—",
-                ]
-                out_md.append("| " + " | ".join(row) + " |")
-                latex_rows.append(row)
-                spe = _mean_std([(r.get("total_steps") or 0) / (r.get("total_epochs") or 1)
-                                 for r in rs])[0]
-                steps_to_base = (m_ep * spe) if (m_ep == m_ep and spe == spe) else float("nan")
+                n_params = _mean_std([r.get("n_params") for r in rs])[0]
+                for name, (m_, s_, _n) in (("step", step), ("total", total), ("peak", peak)):
+                    if s_ / m_ > spread[0]:
+                        spread = (s_ / m_, f"{dataset}/{base}/{method}/{name}")
+                buf = hp["K"] * n_params * 4 / 1e6 if method == "bograd" else None
+                sp_txt = f"{s['speedup']:.2f}"
+                sp_txt = (rf"\textbf{{{sp_txt}}}" if round(s["speedup"], 2) == top else sp_txt) + r"$\times$"
+                rows_b.append(" & ".join(label + [
+                    f"{hp['lr']:g}", knob,
+                    _pm((s["epochs"], s["epochs_std"], s["complete"] < s["n"]), 1),
+                    f"{s['reached']}/{s['complete']}", sp_txt,
+                    f"{step[0] * 1000:.{nd_step}f}",
+                    _pm((total[0] / 60, total[1] / 60, False), 1), f"{peak[0]:.0f}",
+                    f"{buf:.1f}" if buf is not None else "--"]) + r" \\")
+
                 out_json[f"{dataset}/{base}/{method}"] = {
-                    "params_M": params_M, "peak_mem_mb": peak[0], "buf_mb": buf,
-                    "step_ms": step_ms[0], "time_min": tmin[0], "acc_ep1": a1[0],
-                    "acc_50pct": a50[0], "best_acc": best[0], "final_acc": final[0],
-                    "epochs_to_base": m_ep, "steps_per_epoch": spe,
-                    "steps_to_base": steps_to_base,
-                    "epoch_speedup": speed, "n_seeds": final[2],
+                    **{k: {"mean": v[0], "std": v[1], "partial": v[2]} for k, v in stats_a.items()},
+                    "epoch_lo": e_lo, "epoch_mid": e_mid, "lr": hp.get("lr"),
+                    "K": hp.get("K"), "dropout_p": hp.get("dropout_p"),
+                    "target": s["target"], "epochs_to_target": s["epochs"],
+                    "epochs_to_target_std": s["epochs_std"], "per_seed_epochs": s["per_seed"],
+                    "reached": s["reached"], "complete": s["complete"], "n_seeds": s["n"],
+                    "speedup": s["speedup"], "step_ms": step[0] * 1000,
+                    "total_min": total[0] / 60, "peak_mem_mb": peak[0], "buffer_mb": buf,
+                    "n_params": n_params, "steps_per_epoch": steps_per_epoch,
                 }
-        _write_fogo_latex(campaign, dataset, header, latex_rows)
-    (campaign / "30_10_fogo_table.md").write_text("\n".join(out_md), encoding="utf-8")
-    write_json_atomic(campaign / "30_10_fogo_table.json", out_json)
-    print(f"  wrote {campaign/'30_10_fogo_table.md'} (+ per-dataset .tex)")
+
+        steps_txt = f"{steps_per_epoch:,}".replace(",", "{,}")
+        caption = (rf"Results on {DATASET_NAME[dataset]}: mean $\pm$ standard deviation "
+                   rf"over {_WORDS[n_seeds]} seeds, with the columns of "
+                   r"Section~\ref{sec:experiments:tables}. The budget is "
+                   rf"${n_epochs}$ epochs of ${steps_txt}$ steps, and a seed that "
+                   rf"misses the target is charged ${n_epochs + 1}$ epochs.")
+        if gaps:
+            caption += r" $^{\dagger}$Over the logged epochs only: " + "; ".join(gaps) + "."
+        # 16 rows per panel only fit a float page with the rows set slightly tighter
+        lines = [
+            r"\begin{table}[p]",
+            r"  \centering",
+            r"  \footnotesize",
+            r"  \linespread{1}\selectfont",
+            r"  \renewcommand{\arraystretch}{0.92}",
+            r"  \setlength{\tabcolsep}{3pt}",
+            r"  \begin{tabular}{llrrrrr}",
+            r"    \multicolumn{7}{l}{\small\textbf{(a)} Accuracy and loss} \\",
+            r"    \toprule",
+            r"    & & \multicolumn{4}{c}{Test accuracy} & Training loss \\",
+            r"    \cmidrule(lr){3-6} \cmidrule(lr){7-7}",
+            rf"    Base & Method & Epoch {e_lo} & Epoch {e_mid} & Final & Best & Final \\",
+            r"    \midrule",
+            *("    " + r for r in rows_a),
+            r"    \bottomrule",
+            r"  \end{tabular}",
+            "",
+            r"  \vspace{4mm}",
+            r"  \begin{tabular}{llrrrrrrrrr}",
+            r"    \multicolumn{11}{l}{\small\textbf{(b)} Convergence and cost} \\",
+            r"    \toprule",
+            r"    & & \multicolumn{2}{c}{Tuned} & \multicolumn{3}{c}{Convergence}"
+            r" & \multicolumn{4}{c}{Cost} \\",
+            r"    \cmidrule(lr){3-4} \cmidrule(lr){5-7} \cmidrule(lr){8-11}",
+            r"    Base & Method & $\eta$ & $K$ / $r$ & Epochs & Reached & Speed-up"
+            r" & Step & Total & Peak & Buffer \\",
+            r"    & & & & & & & (ms) & (min) & (MB) & (MB) \\",
+            r"    \midrule",
+            *("    " + r for r in rows_b),
+            r"    \bottomrule",
+            r"  \end{tabular}",
+            rf"  \caption{{{caption}}}",
+            rf"  \label{{tab:experiments:results_{dataset}}}",
+            r"\end{table}",
+        ]
+        out = campaign / f"30_10_results_table_{dataset}.tex"
+        out.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"  wrote {out}")
+    write_json_atomic(campaign / "30_10_results_table.json", out_json)
+    print(f"  largest across-seed spread of a cost column: {100 * spread[0]:.1f}% ({spread[1]})")
 
 
 def main():
@@ -449,7 +565,7 @@ def main():
     if "02" in args.only: view_budget_tables(campaign, grouped)
     if "03" in args.only: view_final_bars(campaign, grouped)
     if "09" in args.only: view_pareto(campaign, grouped)
-    if "10" in args.only: view_fogo_table(campaign, grouped)
+    if "10" in args.only: view_results_tables(campaign, grouped, args.target_frac)
 
 
 if __name__ == "__main__":
