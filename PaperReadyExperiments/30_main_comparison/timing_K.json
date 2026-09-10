@@ -1,0 +1,216 @@
+{
+  "device": "cuda",
+  "gpu": "NVIDIA A100-SXM4-40GB",
+  "n_steps": 60,
+  "warmup": 15,
+  "rows": [
+    {
+      "base": "sgd",
+      "method": "baseline",
+      "hp": {
+        "lr": 0.05
+      },
+      "n_timed": 60,
+      "n_params": 15751,
+      "warmup": 15,
+      "median_step_s": 0.001230135000000132,
+      "mean_step_s": 0.001264394049999377,
+      "peak_mem_mb": 18.70336,
+      "dataset": "covertype",
+      "overhead_x": 1.0
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 8
+      },
+      "n_timed": 60,
+      "n_params": 15751,
+      "warmup": 15,
+      "median_step_s": 0.0023108335000046054,
+      "mean_step_s": 0.0023181477666668116,
+      "peak_mem_mb": 19.211264,
+      "dataset": "covertype",
+      "overhead_x": 1.8785202437166304
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 32
+      },
+      "n_timed": 60,
+      "n_params": 15751,
+      "warmup": 33,
+      "median_step_s": 0.003088782000006063,
+      "mean_step_s": 0.0032825546999982673,
+      "peak_mem_mb": 20.734976,
+      "dataset": "covertype",
+      "overhead_x": 2.51092928825351
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 128
+      },
+      "n_timed": 60,
+      "n_params": 15751,
+      "warmup": 129,
+      "median_step_s": 0.006953031999984205,
+      "mean_step_s": 0.006763598749999744,
+      "peak_mem_mb": 26.829824,
+      "dataset": "covertype",
+      "overhead_x": 5.652251175670522
+    },
+    {
+      "base": "sgd",
+      "method": "baseline",
+      "hp": {
+        "lr": 0.05
+      },
+      "n_timed": 60,
+      "n_params": 94538,
+      "warmup": 15,
+      "median_step_s": 0.002299661999984437,
+      "mean_step_s": 0.0023015052333306583,
+      "peak_mem_mb": 211.144192,
+      "dataset": "cifar10",
+      "overhead_x": 1.0
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 8
+      },
+      "n_timed": 60,
+      "n_params": 94538,
+      "warmup": 15,
+      "median_step_s": 0.0037894384999930253,
+      "mean_step_s": 0.0036962486333337098,
+      "peak_mem_mb": 85.943296,
+      "dataset": "cifar10",
+      "overhead_x": 1.6478241150302393
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 32
+      },
+      "n_timed": 60,
+      "n_params": 94538,
+      "warmup": 33,
+      "median_step_s": 0.004558662999997409,
+      "mean_step_s": 0.004633212816666325,
+      "peak_mem_mb": 95.024128,
+      "dataset": "cifar10",
+      "overhead_x": 1.9823187059786438
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 128
+      },
+      "n_timed": 60,
+      "n_params": 94538,
+      "warmup": 129,
+      "median_step_s": 0.008271826499992585,
+      "mean_step_s": 0.008687976583331647,
+      "peak_mem_mb": 131.347456,
+      "dataset": "cifar10",
+      "overhead_x": 3.5969749032895115
+    },
+    {
+      "base": "sgd",
+      "method": "baseline",
+      "hp": {
+        "lr": 0.05
+      },
+      "n_timed": 60,
+      "n_params": 11220132,
+      "warmup": 15,
+      "median_step_s": 0.014374908000007736,
+      "mean_step_s": 0.014446977633332381,
+      "peak_mem_mb": 2351.43424,
+      "dataset": "cifar100",
+      "overhead_x": 1.0
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 8
+      },
+      "n_timed": 60,
+      "n_params": 11220132,
+      "warmup": 15,
+      "median_step_s": 0.018814856000034297,
+      "mean_step_s": 0.01888720343333432,
+      "peak_mem_mb": 1107.24864,
+      "dataset": "cifar100",
+      "overhead_x": 1.308867924582486
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 32
+      },
+      "n_timed": 60,
+      "n_params": 11220132,
+      "warmup": 33,
+      "median_step_s": 0.02137102550000236,
+      "mean_step_s": 0.021462818216667755,
+      "peak_mem_mb": 2184.182784,
+      "dataset": "cifar100",
+      "overhead_x": 1.4866895495950903
+    },
+    {
+      "base": "sgd",
+      "method": "bograd",
+      "hp": {
+        "lr": 0.05,
+        "projection_mode": "negative",
+        "projection_scope": "global",
+        "K": 128
+      },
+      "n_timed": 60,
+      "n_params": 11220132,
+      "warmup": 129,
+      "median_step_s": 0.034306987500002606,
+      "mean_step_s": 0.03436895668333004,
+      "peak_mem_mb": 6492.7488,
+      "dataset": "cifar100",
+      "overhead_x": 2.3865883176423908
+    }
+  ],
+  "failed": []
+}
