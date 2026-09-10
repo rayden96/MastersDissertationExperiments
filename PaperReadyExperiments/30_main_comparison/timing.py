@@ -30,7 +30,7 @@ import statistics
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import torch
 
@@ -61,15 +61,30 @@ K_PER_BASE = {"sgd": 16, "signsgd": 32, "rmsprop": 32, "adam": 128}
 
 
 def time_arm(bundle, base: str, method: str, lr: float, n_steps: int,
-             warmup: int, batch_size: int, device) -> Dict[str, Any]:
+             warmup: int, batch_size: int, device,
+             K: Optional[int] = None) -> Dict[str, Any]:
     meta = bundle.meta
     hp: Dict[str, Any] = {"lr": lr, **CANONICAL_HP.get(method, {})}
     if method == "bograd":
-        hp["K"] = K_PER_BASE.get(base, 32)
+        hp["K"] = K if K is not None else K_PER_BASE.get(base, 32)
+        # The buffer gains one update per step and the projection's cost grows
+        # with how many it holds. A fixed 15-step warmup timed a K=128 buffer
+        # that was never more than 75 entries full, so warm up until it is.
+        warmup = max(warmup, hp["K"] + 1)
 
     spec = build_method(method, base, hp=hp)
     mk = {**meta.get("model_kwargs", {}), **spec.model_kwargs}
     model = get_model(meta["model"], num_classes=meta["num_classes"], **mk).to(device)
+    n_params = sum(p.numel() for p in model.parameters())
+    if method == "bograd" and device.type == "cuda":
+        # A full buffer larger than the device may not raise: on Windows the
+        # driver can fall back to system memory, and the step time is then the
+        # paging, not the projection. Refuse it up front instead.
+        need = hp["K"] * sum(p.numel() * p.element_size() for p in model.parameters())
+        have = torch.cuda.get_device_properties(device).total_memory
+        if need > have:
+            raise MemoryError(f"a full K={hp['K']} buffer needs {need / 1e9:.1f} GB "
+                              f"and the device has {have / 1e9:.1f} GB")
     crit = torch.nn.CrossEntropyLoss()
     opt = spec.optimizer_factory(model, crit)
     loader = DataLoader(bundle.train, batch_size=batch_size, shuffle=True, num_workers=2)
@@ -103,6 +118,7 @@ def time_arm(bundle, base: str, method: str, lr: float, n_steps: int,
     peak = (torch.cuda.max_memory_allocated() / 1e6) if device.type == "cuda" else float("nan")
     return {
         "base": base, "method": method, "hp": hp, "n_timed": len(per_step),
+        "n_params": n_params, "warmup": warmup,
         "median_step_s": statistics.median(per_step) if per_step else float("nan"),
         "mean_step_s": statistics.fmean(per_step) if per_step else float("nan"),
         "peak_mem_mb": peak,
@@ -122,6 +138,11 @@ def main():
     ap.add_argument("--lr", type=float, default=0.05)
     ap.add_argument("--cosgd_max_classes", type=int, default=10,
                     help="skip COSGD above this class count (the 20.07 wall)")
+    ap.add_argument("--bograd_K", type=int, nargs="+", default=None,
+                    help="time BOGrad at each of these buffer sizes instead of "
+                         "the per-base K, for the overhead-against-K table")
+    ap.add_argument("--out", default="timing.json",
+                    help="file name, so a K sweep does not overwrite timing.json")
     ap.add_argument("--smoke", action="store_true")
     args = ap.parse_args()
     if args.smoke:
@@ -134,7 +155,7 @@ def main():
     out: Dict[str, Any] = {
         "device": str(device),
         "gpu": torch.cuda.get_device_name(0) if device.type == "cuda" else None,
-        "n_steps": args.n_steps, "warmup": args.warmup, "rows": [],
+        "n_steps": args.n_steps, "warmup": args.warmup, "rows": [], "failed": [],
     }
 
     for ds in args.datasets:
@@ -149,24 +170,41 @@ def main():
             for method in args.methods:
                 if method == "cosgd" and nc > args.cosgd_max_classes:
                     continue
-                try:
-                    r = time_arm(bundle, base, method, args.lr, args.n_steps,
-                                 args.warmup, bs, device)
-                except Exception as e:
-                    print(f"  {base:<8}{method:<10} FAILED {type(e).__name__}: {e}", flush=True)
-                    continue
-                r["dataset"] = ds
-                if method == "baseline":
-                    base_med = r["median_step_s"]
-                r["overhead_x"] = (r["median_step_s"] / base_med) if base_med else None
-                out["rows"].append(r)
-                ov = f"{r['overhead_x']:.2f}x" if r["overhead_x"] else "ref"
-                print(f"  {base:<8}{method:<10}{r['median_step_s']*1000:8.2f} ms/step"
-                      f"{ov:>9}   peak {r['peak_mem_mb']:.0f} MB", flush=True)
+                Ks = args.bograd_K if (method == "bograd" and args.bograd_K) else [None]
+                for K in Ks:
+                    tag = method if K is None else f"{method} K={K}"
+                    failed = None
+                    try:
+                        r = time_arm(bundle, base, method, args.lr, args.n_steps,
+                                     args.warmup, bs, device, K=K)
+                    except Exception as e:
+                        failed = f"{type(e).__name__}: {str(e)[:120]}"
+                    if failed:
+                        # A buffer too large for the device is a result, not a
+                        # crash, so it is recorded for the table to report. It
+                        # goes in its own list so readers of `rows` are unchanged.
+                        print(f"  {base:<8}{tag:<14} FAILED {failed}", flush=True)
+                        out["failed"].append({"dataset": ds, "base": base,
+                                              "method": method, "K": K,
+                                              "error": failed})
+                        if device.type == "cuda":
+                            torch.cuda.empty_cache()
+                        continue
+                    r["dataset"] = ds
+                    if method == "baseline":
+                        base_med = r["median_step_s"]
+                    r["overhead_x"] = (r["median_step_s"] / base_med) if base_med else None
+                    out["rows"].append(r)
+                    ov = f"{r['overhead_x']:.2f}x" if r["overhead_x"] else "ref"
+                    print(f"  {base:<8}{tag:<14}{r['median_step_s']*1000:8.2f} ms/step"
+                          f"{ov:>9}   peak {r['peak_mem_mb']:.0f} MB", flush=True)
+                    del r
+                    if device.type == "cuda":
+                        torch.cuda.empty_cache()
 
     for d in (storage.persistent_dir("30_main_comparison/timing"), _HERE):
-        storage.write_json_atomic(Path(d) / "timing.json", out)
-    print(f"\nwrote timing.json ({len(out['rows'])} rows)")
+        storage.write_json_atomic(Path(d) / args.out, out)
+    print(f"\nwrote {args.out} ({len(out['rows'])} rows, {len(out['failed'])} failed)")
 
 
 if __name__ == "__main__":
