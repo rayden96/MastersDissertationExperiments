@@ -108,17 +108,13 @@ AXES: Dict[str, dict] = {
     ),
 }
 
-# The two training-hyperparameter sweeps vary the knob AND carry a matched
-# baseline at every value, so each value gets its own panel.
+# The batch-size sweep varies the knob AND carries a matched baseline at every
+# value, so each value gets its own panel. The learning-rate sweep has the same
+# shape but is drawn by `do_learning_rate`, as a single panel.
 HYPER_AXES: Dict[str, dict] = {
     "batch_size": dict(stem="20_09_batch_size", fig="ax_batch_size",
                        filter_lr=True,
                        label=lambda v: f"batch {v[2:]}"),
-    # the learning-rate axis sweeps the rate itself, so it cannot be filtered
-    # by it; its one superseded sweep is excluded by run id instead
-    "learning_rate": dict(stem="20_10_learning_rate", fig="ax_learning_rate",
-                          filter_lr=False,
-                          label=lambda v: "lr " + v[2:].replace("p", ".").replace("m", "-")),
 }
 
 
@@ -264,10 +260,122 @@ def do_base_optimizer(outdir: Path) -> Optional[dict]:
     return stats
 
 
+def do_learning_rate(outdir: Path) -> Optional[dict]:
+    """20.10 sweeps the rate for both arms. One panel of test accuracy: the
+    baseline at its own best rate against COSGD at every rate on the grid.
+
+    The drawn baseline is the rate `pick_lr.best_rates` selects, which is the
+    rate every fixed-knob axis of the chapter runs its baseline at, so the
+    dashed curve is the same reference as on every earlier figure. The other
+    baseline rates are left off: the question is where COSGD's usable band
+    sits against a properly tuned baseline, and a second family of curves
+    would bury it.
+
+    Speed is measured as on every other axis, epochs to 99% of the drawn
+    baseline's own final accuracy, with a seed that never arrives charged the
+    budget plus one. The per-rate table goes to lr_curves.json.
+    """
+    import numpy as np
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from common.plotting import apply_thesis_rcparams
+    from _curves import BASELINE_STYLE, epochs_to_target
+    from pick_lr import TARGET_FRAC
+
+    ds = "cifar10"
+    recs = []
+    for d in _axis_dirs("20_10_learning_rate", ds):
+        recs.extend(load_axis(d))
+    recs = [r for r in recs if r.dataset == ds and r.acc]
+    if not recs:
+        print("  learning_rate: no results — skipped")
+        return None
+    stats = {ds: final_means(recs)}
+
+    arms: Dict[str, Dict[float, list]] = {}
+    for r in recs:
+        tag, _, arm = r.cell.rpartition("_")
+        lr = float(tag[2:].replace("p", ".").replace("m", "-"))
+        arms.setdefault(arm, {}).setdefault(lr, []).append(r)
+    width = max(len(r.acc) for r in recs)
+
+    def seed_array(rs):
+        arr = np.full((len(rs), width), np.nan)
+        for i, r in enumerate(rs):
+            v = np.asarray(r.acc[-width:], dtype=float)
+            v[~np.isfinite(v)] = np.nan
+            # a run resumed from a checkpoint logs only the epochs after the
+            # resume point, and those are the last epochs of the run
+            arr[i, width - len(v):] = v
+        return arr
+
+    acc = {arm: {lr: seed_array(rs) for lr, rs in by.items()}
+           for arm, by in arms.items()}
+    base_lr = best_rates(ds)["baseline"]["lr"]
+    ref = acc["baseline"][base_lr]
+    target = TARGET_FRAC * float(np.nanmean(ref[:, -1]))
+
+    table: Dict[str, Dict[str, dict]] = {}
+    for arm in ("baseline", "cosgd"):
+        table[arm] = {}
+        for lr in sorted(acc[arm]):
+            per_seed = []
+            for c in acc[arm][lr]:
+                hit = epochs_to_target(list(c), target)
+                per_seed.append(hit if hit is not None else width + 1)
+            table[arm][f"{lr:g}"] = dict(
+                epochs=float(np.mean(per_seed)), per_seed=per_seed,
+                reached=sum(e <= width for e in per_seed),
+                final=float(np.nanmean(acc[arm][lr][:, -1])))
+    base_ep = table["baseline"][f"{base_lr:g}"]["epochs"]
+    for arm in table:
+        for v in table[arm].values():
+            v["speedup"] = base_ep / v["epochs"]
+    (_HERE / "lr_curves.json").write_text(json.dumps(
+        dict(dataset=ds, target=target, baseline_lr=base_lr, **table), indent=1))
+
+    apply_thesis_rcparams("dense")
+    fig, ax = plt.subplots(figsize=(7.0, 4.3))
+    cmap = plt.get_cmap("viridis")
+    lrs = sorted(acc["cosgd"])
+    x = np.arange(1, width + 1)
+    for j, lr in enumerate(lrs):
+        ax.plot(x, np.nanmean(acc["cosgd"][lr], axis=0), linewidth=1.8,
+                color=cmap(0.05 + 0.82 * j / max(1, len(lrs) - 1)),
+                label=f"COSGD, lr {lr:g}")
+    m, s = np.nanmean(ref, axis=0), np.nanstd(ref, axis=0)
+    ax.plot(x, m, label=f"baseline, lr {base_lr:g}", **BASELINE_STYLE)
+    ax.fill_between(x, m - s, m + s, color=BASELINE_STYLE["color"],
+                    alpha=0.12, linewidth=0)
+    ax.axhline(target, color="0.6", linestyle=":", linewidth=1.0, zorder=0)
+    ax.set_xlabel("epoch")
+    ax.set_ylabel("test accuracy")
+    ax.set_title("CIFAR-10: learning rate")
+    ax.grid(alpha=0.3)
+    ax.legend(fontsize=9, loc="upper left", bbox_to_anchor=(1.02, 1.0),
+              frameon=True)
+    out = outdir / "ax_learning_rate_cifar10"
+    fig.savefig(out.with_suffix(".pdf"), bbox_inches="tight")
+    fig.savefig(out.with_suffix(".png"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"wrote {out.with_suffix('.pdf')}")
+
+    print(f"\n  {ds}  target {target:.4f}  drawn baseline lr {base_lr:g}")
+    for arm in ("baseline", "cosgd"):
+        for lr, v in table[arm].items():
+            cens = "" if v["reached"] == len(v["per_seed"]) else "*"
+            print(f"    {arm:8s} lr {lr:<6s} {v['epochs']:5.1f}{cens:1s} "
+                  f"{str(v['per_seed']):14s} final {v['final']:.4f} "
+                  f"speed-up {v['speedup']:.2f}")
+    return stats
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--axes", nargs="+",
-                    default=list(AXES) + list(HYPER_AXES) + ["base_optimizer"])
+                    default=list(AXES) + list(HYPER_AXES)
+                    + ["learning_rate", "base_optimizer"])
     ap.add_argument("--outdir", default=None)
     args = ap.parse_args()
 
@@ -281,6 +389,8 @@ def main():
         print(f"[{key}]")
         if key == "base_optimizer":
             s = do_base_optimizer(outdir)
+        elif key == "learning_rate":
+            s = do_learning_rate(outdir)
         elif key in HYPER_AXES:
             s = do_hyper_axis(key, outdir)
         else:
@@ -289,9 +399,17 @@ def main():
             allstats[key] = s
 
     # Final accuracies per cell, so the prose can quote them without
-    # re-deriving anything from the figures.
+    # re-deriving anything from the figures. Merged, so that redrawing one
+    # axis does not wipe the others' entries.
     out = _HERE / "curve_stats.json"
-    out.write_text(json.dumps(allstats, indent=2))
+    merged: Dict[str, dict] = {}
+    if out.exists():
+        try:
+            merged = json.loads(out.read_text())
+        except ValueError:
+            merged = {}
+    merged.update(allstats)
+    out.write_text(json.dumps(merged, indent=2))
     print(f"\nwrote {out}")
     for axis, per_ds in allstats.items():
         print(f"\n=== {axis} (final test accuracy, mean +/- std) ===")
